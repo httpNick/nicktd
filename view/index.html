@@ -25,9 +25,13 @@
 
     <div id="game-view">
         <div id="controls">
+            <div id="game-status">
+                Phase: <span id="game-phase"></span> | Time: <span id="game-timer"></span>
+            </div>
             <button id="selectSquare">Square</button>
             <button id="selectCircle">Circle</button>
             <button id="selectTriangle">Triangle</button>
+            <button id="skip-to-combat">Start Combat</button>
             <button id="leave-lobby">Leave Lobby</button>
         </div>
         <canvas id="gameCanvas" width="600" height="600"></canvas>
@@ -38,169 +42,6 @@
     </div>
 
     <script src="https://cdnjs.cloudflare.com/ajax/libs/materialize/1.0.0/js/materialize.min.js"></script>
-    <script>
-        // Views and Elements
-        const lobbySelectionView = document.getElementById('lobby-selection');
-        const gameView = document.getElementById('game-view');
-        const lobbyList = document.getElementById('lobby-list');
-        const canvas = document.getElementById('gameCanvas');
-        const ctx = canvas.getContext('2d');
-        const leaveLobbyButton = document.getElementById('leave-lobby');
-        const uiPanel = document.getElementById('ui-panel');
-        const towerTypeEl = document.getElementById('tower-type');
-        const sellButton = document.getElementById('sell-button');
-
-        // Game State
-        const BOARD_SIZE = 10;
-        const SQUARE_SIZE = canvas.width / BOARD_SIZE;
-        let selectedShape = 'Square';
-        let gameState = { shapes: [] };
-        let selectedTower = null;
-        let myPlayerId = null;
-
-        const socket = new WebSocket('ws://127.0.0.1:9001');
-
-        // View Management
-        function showLobbyView() {
-            lobbySelectionView.style.display = 'block';
-            gameView.style.display = 'none';
-        }
-
-        function showGameView() {
-            lobbySelectionView.style.display = 'none';
-            gameView.style.display = 'flex';
-            initGameView();
-        }
-
-        // Lobby Logic
-        function renderLobbies(lobbies) {
-            lobbyList.innerHTML = '';
-            lobbies.forEach(lobby => {
-                const lobbyEl = document.createElement('div');
-                lobbyEl.className = 'col s12 m6 l4';
-                lobbyEl.innerHTML = `
-                    <div class="card blue-grey darken-1">
-                        <div class="card-content white-text"><span class="card-title">Lobby ${lobby.id + 1}</span><p>Players: ${lobby.player_count} / 2</p></div>
-                        <div class="card-action"><a href="#" class="join-lobby-btn" data-lobby-id="${lobby.id}" ${lobby.player_count >= 2 ? 'disabled' : ''}>Join</a></div>
-                    </div>`;
-                lobbyList.appendChild(lobbyEl);
-            });
-            document.querySelectorAll('.join-lobby-btn').forEach(button => {
-                if (!button.hasAttribute('disabled')) {
-                    button.addEventListener('click', (e) => {
-                        e.preventDefault();
-                        const lobbyId = parseInt(e.target.getAttribute('data-lobby-id'));
-                        socket.send(JSON.stringify({ action: 'joinLobby', payload: lobbyId }));
-                    });
-                }
-            });
-        }
-
-        // Game Logic
-        function drawCheckerboard() {
-            for (let row = 0; row < BOARD_SIZE; row++) {
-                for (let col = 0; col < BOARD_SIZE; col++) {
-                    ctx.fillStyle = (row + col) % 2 === 0 ? '#EEE' : '#CCC';
-                    ctx.fillRect(col * SQUARE_SIZE, row * SQUARE_SIZE, SQUARE_SIZE, SQUARE_SIZE);
-                }
-            }
-        }
-
-        function drawShapes(shapes) {
-            shapes.forEach(placedShape => {
-                const { shape, row, col, owner_id } = placedShape;
-                const x = col * SQUARE_SIZE + SQUARE_SIZE / 2;
-                const y = row * SQUARE_SIZE + SQUARE_SIZE / 2;
-                ctx.fillStyle = owner_id === myPlayerId ? '#88F' : '#F88'; // Blue for own, Red for other
-                if (shape === 'Square') {
-                    ctx.fillRect(col * SQUARE_SIZE + 10, row * SQUARE_SIZE + 10, SQUARE_SIZE - 20, SQUARE_SIZE - 20);
-                } else if (shape === 'Circle') {
-                    ctx.beginPath(); ctx.arc(x, y, SQUARE_SIZE / 2 - 10, 0, 2 * Math.PI); ctx.fill();
-                } else if (shape === 'Triangle') {
-                    ctx.beginPath(); ctx.moveTo(x, y - (SQUARE_SIZE / 2 - 10)); ctx.lineTo(x - (SQUARE_SIZE / 2 - 10), y + (SQUARE_SIZE / 2 - 10)); ctx.lineTo(x + (SQUARE_SIZE / 2 - 10), y + (SQUARE_SIZE / 2 - 10)); ctx.closePath(); ctx.fill();
-                }
-            });
-        }
-
-        function updateGameState(newState) {
-            gameState = newState;
-            ctx.clearRect(0, 0, canvas.width, canvas.height);
-            drawCheckerboard();
-            drawShapes(gameState.shapes);
-        }
-        
-        function showUiPanel(tower) {
-            selectedTower = tower;
-            towerTypeEl.textContent = tower.shape;
-            sellButton.disabled = tower.owner_id !== myPlayerId;
-            uiPanel.style.display = 'block';
-        }
-
-        function hideUiPanel() {
-            selectedTower = null;
-            uiPanel.style.display = 'none';
-        }
-
-        function initGameView() {
-            document.getElementById('selectSquare').onclick = () => { selectedShape = 'Square'; };
-            document.getElementById('selectCircle').onclick = () => { selectedShape = 'Circle'; };
-            document.getElementById('selectTriangle').onclick = () => { selectedShape = 'Triangle'; };
-
-            canvas.addEventListener('click', function(event) {
-                const rect = canvas.getBoundingClientRect();
-                const x = event.clientX - rect.left;
-                const y = event.clientY - rect.top;
-                const row = Math.floor(y / SQUARE_SIZE);
-                const col = Math.floor(x / SQUARE_SIZE);
-                const clickedTower = gameState.shapes.find(s => s.row === row && s.col === col);
-
-                if (clickedTower) {
-                    showUiPanel(clickedTower);
-                } else {
-                    hideUiPanel();
-                    const placeMessage = { action: 'place', payload: { shape: selectedShape, row, col } };
-                    if (socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify(placeMessage));
-                }
-            });
-
-            sellButton.addEventListener('click', function() {
-                if (selectedTower && selectedTower.owner_id === myPlayerId) {
-                    const sellMessage = { action: 'sell', payload: { row: selectedTower.row, col: selectedTower.col } };
-                    if (socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify(sellMessage));
-                    hideUiPanel();
-                }
-            });
-        }
-
-        // WebSocket Handling
-        socket.onmessage = function(event) {
-            const serverMsg = JSON.parse(event.data);
-            switch (serverMsg.type) {
-                case 'LobbyStatus':
-                    renderLobbies(serverMsg.data);
-                    break;
-                case 'GameState':
-                    if (gameView.style.display === 'none') showGameView();
-                    updateGameState(serverMsg.data);
-                    break;
-                case 'PlayerId':
-                    myPlayerId = serverMsg.data;
-                    break;
-                case 'Error':
-                    M.toast({html: serverMsg.data});
-                    break;
-            }
-        };
-
-        leaveLobbyButton.onclick = () => {
-            socket.send(JSON.stringify({ action: 'leaveLobby' }));
-            hideUiPanel();
-            showLobbyView();
-        };
-
-        // Initial View
-        showLobbyView();
-
-    </script>
+    <script src="app.js" defer></script>
 </body>
 </html>

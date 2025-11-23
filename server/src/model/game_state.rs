@@ -1,7 +1,25 @@
-use serde::{Deserialize, Serialize};
-use super::placed_shape::PlacedShape;
+use bevy_ecs::prelude::World;
+use serde::Serialize;
 
-#[derive(Serialize, Deserialize, Clone, Debug, Default)]
+#[derive(Debug, Serialize, Clone, Copy)]
+pub enum GamePhase {
+    Build,
+    Combat,
+}
+
+#[derive(Debug)]
 pub struct GameState {
-    pub shapes: Vec<PlacedShape>,
+    pub world: World,
+    pub phase: GamePhase,
+    pub phase_timer: f32,
+}
+
+impl GameState {
+    pub fn new() -> Self {
+        Self {
+            world: World::new(),
+            phase: GamePhase::Build,
+            phase_timer: 30.0,
+        }
+    }
 }

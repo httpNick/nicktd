@@ -1,10 +1,13 @@
-use crate::model::{messages::ClientMessage, placed_shape::PlacedShape, player::Player};
+use crate::model::components::{PlayerIdComponent, Position, ShapeComponent};
+use crate::model::messages::ClientMessage;
 use crate::ServerState;
+use bevy_ecs::prelude::Entity;
 use futures_util::{stream::SplitSink, SinkExt, StreamExt};
 use tokio::net::TcpStream;
-use tokio::sync::broadcast;
 use tokio_tungstenite::{tungstenite::Message, WebSocketStream};
 use uuid::Uuid;
+
+const SQUARE_SIZE: u32 = 60;
 
 pub async fn in_game_loop(
     ws_sender: &mut SplitSink<WebSocketStream<TcpStream>, Message>,
@@ -30,12 +33,38 @@ pub async fn in_game_loop(
                                 let lobby = &mut lobbies[lobby_id];
                                 match client_msg {
                                     ClientMessage::Place(p) => {
-                                        lobby.game_state.shapes.push(PlacedShape { shape: p.shape, row: p.row, col: p.col, owner_id: player_id });
+                                        let x = (p.col * SQUARE_SIZE) as f32 + (SQUARE_SIZE as f32 / 2.0);
+                                        let y = (p.row * SQUARE_SIZE) as f32 + (SQUARE_SIZE as f32 / 2.0);
+
+                                        lobby.game_state.world.spawn((
+                                            Position { x, y },
+                                            ShapeComponent(p.shape),
+                                            PlayerIdComponent(player_id),
+                                        ));
                                         lobby.broadcast_gamestate();
                                     }
                                     ClientMessage::Sell(s) => {
-                                        lobby.game_state.shapes.retain(|shape| !(shape.row == s.row && shape.col == s.col && shape.owner_id == player_id));
-                                        lobby.broadcast_gamestate();
+                                        let mut entity_to_sell: Option<Entity> = None;
+                                        let x_min = (s.col * SQUARE_SIZE) as f32;
+                                        let x_max = x_min + SQUARE_SIZE as f32;
+                                        let y_min = (s.row * SQUARE_SIZE) as f32;
+                                        let y_max = y_min + SQUARE_SIZE as f32;
+
+                                        let mut query = lobby.game_state.world.query::<(Entity, &Position, &PlayerIdComponent)>();
+                                        for (entity, position, owner) in query.iter(&lobby.game_state.world) {
+                                            if position.x >= x_min && position.x < x_max && position.y >= y_min && position.y < y_max && owner.0 == player_id {
+                                                entity_to_sell = Some(entity);
+                                                break;
+                                            }
+                                        }
+
+                                        if let Some(entity) = entity_to_sell {
+                                            lobby.game_state.world.despawn(entity);
+                                            lobby.broadcast_gamestate();
+                                        }
+                                    }
+                                    ClientMessage::SkipToCombat => {
+                                        lobby.game_state.phase_timer = 0.0;
                                     }
                                     ClientMessage::LeaveLobby => break,
                                     _ => {}

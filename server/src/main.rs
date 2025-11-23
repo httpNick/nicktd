@@ -41,12 +41,16 @@ async fn handle_connection(
     let player_id = Uuid::new_v4();
     send_message(&mut ws_sender, ServerMessage::PlayerId(player_id)).await;
 
-    let mut lobby_rx = lobby_tx.subscribe();
-    broadcast_lobby_status(&server_state, &lobby_tx).await;
+    loop {
+        let mut lobby_rx = lobby_tx.subscribe();
+        broadcast_lobby_status(&server_state, &lobby_tx).await;
 
-    if let Some(lobby_id) = handler::pre_game::pre_game_loop(&mut ws_sender, &mut ws_receiver, &server_state, &mut lobby_rx, player_id).await {
-        handler::in_game::in_game_loop(&mut ws_sender, &mut ws_receiver, &server_state, lobby_id, player_id).await;
-        handler::cleanup::cleanup(lobby_id, player_id, &server_state, &lobby_tx).await;
+        if let Some(lobby_id) = handler::pre_game::pre_game_loop(&mut ws_sender, &mut ws_receiver, &server_state, &mut lobby_rx, player_id, &lobby_tx).await {
+            handler::in_game::in_game_loop(&mut ws_sender, &mut ws_receiver, &server_state, lobby_id, player_id).await;
+            handler::cleanup::cleanup(lobby_id, player_id, &server_state, &lobby_tx).await;
+        } else {
+            break;
+        }
     }
 }
 
