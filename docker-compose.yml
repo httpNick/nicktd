@@ -1,0 +1,9 @@
+services:
+  nicktd:
+    build: .
+    ports:
+      - "9001:9001"
+    volumes:
+      - ./data:/usr/src/app/data
+    environment:
+      - RUST_LOG=info

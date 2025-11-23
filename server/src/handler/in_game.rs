@@ -17,10 +17,10 @@ pub async fn in_game_loop(
     player_id: Uuid,
 ) {
     let mut game_rx = {
-        let lobbies = server_state.lock().await;
+        let lobbies = server_state.lobbies.lock().await;
         lobbies[lobby_id].tx.subscribe()
     };
-    server_state.lock().await[lobby_id].broadcast_gamestate();
+    server_state.lobbies.lock().await[lobby_id].broadcast_gamestate();
 
     loop {
         tokio::select! {
@@ -29,7 +29,7 @@ pub async fn in_game_loop(
                     Some(Ok(msg)) => {
                         if let Message::Text(text) = msg {
                             if let Ok(client_msg) = serde_json::from_str::<ClientMessage>(&text) {
-                                let mut lobbies = server_state.lock().await;
+                                let mut lobbies = server_state.lobbies.lock().await;
                                 let lobby = &mut lobbies[lobby_id];
                                 match client_msg {
                                     ClientMessage::Place(p) => {

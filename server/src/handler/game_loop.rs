@@ -15,7 +15,7 @@ pub async fn run_game_loop(server_state: ServerState, lobby_id: usize) {
 
     loop {
         interval.tick().await;
-        let mut lobbies = server_state.lock().await;
+        let mut lobbies = server_state.lobbies.lock().await;
         if let Some(lobby) = lobbies.get_mut(lobby_id) {
             match lobby.game_state.phase {
                 crate::model::game_state::GamePhase::Build => {

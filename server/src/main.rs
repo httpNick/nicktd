@@ -1,4 +1,5 @@
 use futures_util::{stream::SplitSink, StreamExt, SinkExt};
+use sqlx::SqlitePool;
 use std::sync::Arc;
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::{broadcast, Mutex};
@@ -8,18 +9,29 @@ use uuid::Uuid;
 
 mod model;
 mod handler;
+mod database;
 use model::{lobby::Lobby, messages::{ServerMessage, LobbyInfo}};
 
 const NUM_LOBBIES: usize = 5;
-type ServerState = Arc<Mutex<Vec<Lobby>>>;
+
+pub struct ServerStateData {
+    pub lobbies: Mutex<Vec<Lobby>>,
+    pub db_pool: SqlitePool,
+}
+
+type ServerState = Arc<ServerStateData>;
 
 #[tokio::main]
 async fn main() {
     env_logger::init();
-    let server_state = Arc::new(Mutex::new((0..NUM_LOBBIES).map(|_| Lobby::new()).collect()));
+    let db_pool = database::init_db().await.unwrap();
+    let server_state = Arc::new(ServerStateData {
+        lobbies: Mutex::new((0..NUM_LOBBIES).map(|_| Lobby::new()).collect()),
+        db_pool,
+    });
     let (lobby_tx, _) = broadcast::channel(16);
 
-    let listener = TcpListener::bind("127.0.0.1:9001").await.unwrap();
+    let listener = TcpListener::bind("0.0.0.0:9001").await.unwrap();
 
     while let Ok((stream, _)) = listener.accept().await {
         tokio::spawn(handle_connection(
@@ -55,11 +67,11 @@ async fn handle_connection(
 }
 
 pub(crate) async fn broadcast_lobby_status(state: &ServerState, lobby_tx: &broadcast::Sender<String>) {
-    let lobbies = state.lock().await;
+    let lobbies = state.lobbies.lock().await;
     let lobby_infos: Vec<LobbyInfo> = lobbies.iter().enumerate().map(|(id, lobby)| LobbyInfo { id, player_count: lobby.players.len() }).collect();
     let msg = ServerMessage::LobbyStatus(lobby_infos);
     let msg_str = serde_json::to_string(&msg).unwrap();
-    lobby_tx.send(msg_str).unwrap();
+    let _ = lobby_tx.send(msg_str);
 }
 
 pub(crate) async fn send_message(sender: &mut SplitSink<WebSocketStream<TcpStream>, Message>, msg: ServerMessage) {

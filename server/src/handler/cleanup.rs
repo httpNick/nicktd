@@ -12,7 +12,7 @@ pub async fn cleanup(
     lobby_tx: &broadcast::Sender<String>,
 ) {
     {
-        let mut lobbies = server_state.lock().await;
+        let mut lobbies = server_state.lobbies.lock().await;
         if let Some(lobby) = lobbies.get_mut(lobby_id) {
             lobby.players.retain(|p| p.id != player_id);
             if lobby.players.is_empty() {

@@ -32,7 +32,7 @@ pub async fn pre_game_loop(
                             if let Ok(ClientMessage::JoinLobby(lobby_id)) = serde_json::from_str(&text) {
                                 let mut should_break = false;
                                 {
-                                    let mut lobbies = server_state.lock().await;
+                                    let mut lobbies = server_state.lobbies.lock().await;
                                     if let Some(lobby) = lobbies.get_mut(lobby_id) {
                                         if lobby.players.len() < 2 {
                                             lobby.players.push(Player { id: player_id });
