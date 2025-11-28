@@ -1,5 +1,7 @@
+pub mod account;
 pub mod components;
 pub mod game_state;
+pub mod jwt;
 pub mod lobby;
 pub mod messages;
 pub mod player;

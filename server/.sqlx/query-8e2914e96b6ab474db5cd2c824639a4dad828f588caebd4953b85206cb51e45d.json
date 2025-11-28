@@ -1,0 +1,32 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT id AS \"id!\", username AS \"username!\", password_hash AS \"password_hash!\" FROM players WHERE username = ?",
+  "describe": {
+    "columns": [
+      {
+        "name": "id!",
+        "ordinal": 0,
+        "type_info": "Integer"
+      },
+      {
+        "name": "username!",
+        "ordinal": 1,
+        "type_info": "Text"
+      },
+      {
+        "name": "password_hash!",
+        "ordinal": 2,
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      true,
+      false,
+      false
+    ]
+  },
+  "hash": "8e2914e96b6ab474db5cd2c824639a4dad828f588caebd4953b85206cb51e45d"
+}
