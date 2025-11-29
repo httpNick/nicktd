@@ -66,5 +66,5 @@ pub async fn get_account_by_username(
 }
 
 pub async fn verify_password(password: &str, hashed_password: &str) -> bool {
-    verify(password, hashed_password).unwrap_or(false) // Handle error properly in production
+    verify(password, hashed_password).unwrap_or(false) // TODO: Handle error properly
 }

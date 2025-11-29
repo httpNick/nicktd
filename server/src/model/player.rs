@@ -1,5 +1,3 @@
-use uuid::Uuid;
-
 pub struct Player {
-    pub id: Uuid,
+    pub id: i64,
 }

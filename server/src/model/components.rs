@@ -1,5 +1,4 @@
 use bevy_ecs::prelude::{Component, Entity};
-use uuid::Uuid;
 
 use super::shape::Shape;
 
@@ -16,7 +15,7 @@ pub struct Target(pub Entity);
 pub struct ShapeComponent(pub Shape);
 
 #[derive(Component)]
-pub struct PlayerIdComponent(pub Uuid);
+pub struct PlayerIdComponent(pub i64);
 
 #[derive(Component)]
 pub struct Enemy;

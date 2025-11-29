@@ -1,27 +1,31 @@
-use crate::model::{messages::{ClientMessage, ServerMessage}, player::Player};
-use crate::ServerState;
-use futures_util::{stream::SplitSink, SinkExt, StreamExt};
-use tokio::net::TcpStream;
+use crate::{
+    model::{
+        messages::{ClientMessage, ServerMessage},
+        player::Player,
+    },
+    routes::ws::{broadcast_lobby_status, send_message},
+    state::{ServerState, UpgradedWebSocket},
+};
+use futures_util::{
+    stream::{SplitSink, SplitStream},
+    SinkExt, StreamExt,
+};
 use tokio::sync::broadcast;
-use tokio_tungstenite::{tungstenite::Message, WebSocketStream};
-use uuid::Uuid;
-
-use crate::send_message;
+use tokio_tungstenite::tungstenite::Message;
 
 pub async fn pre_game_loop(
-    ws_sender: &mut SplitSink<WebSocketStream<TcpStream>, Message>,
-    ws_receiver: &mut futures_util::stream::SplitStream<WebSocketStream<TcpStream>>,
+    ws_sender: &mut SplitSink<UpgradedWebSocket, Message>,
+    ws_receiver: &mut SplitStream<UpgradedWebSocket>,
     server_state: &ServerState,
     lobby_rx: &mut broadcast::Receiver<String>,
-    player_id: Uuid,
-    lobby_tx: &broadcast::Sender<String>,
+    player_id: i64,
 ) -> Option<usize> {
     let mut lobby_id_opt: Option<usize> = None;
 
     loop {
         tokio::select! {
             Ok(msg) = lobby_rx.recv() => {
-                if ws_sender.send(Message::Text(msg)).await.is_err() {
+                if ws_sender.send(Message::Text(msg.into())).await.is_err() {
                     break;
                 }
             },
@@ -42,15 +46,15 @@ pub async fn pre_game_loop(
                                             lobby_id_opt = Some(lobby_id);
                                             should_break = true;
                                         } else {
-                                            send_message(ws_sender, ServerMessage::Error("Lobby is full".into())).await;
+                                            let _ = send_message(ws_sender, ServerMessage::Error("Lobby is full".into())).await;
                                         }
                                     } else {
-                                        send_message(ws_sender, ServerMessage::Error("Lobby does not exist".into())).await;
+                                        let _ = send_message(ws_sender, ServerMessage::Error("Lobby does not exist".into())).await;
                                     }
                                 }
 
                                 if should_break {
-                                    crate::broadcast_lobby_status(server_state, lobby_tx).await;
+                                    broadcast_lobby_status(server_state).await;
                                     break;
                                 }
                             }

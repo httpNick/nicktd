@@ -1,6 +1,10 @@
-use crate::model::components::{Enemy, Position, ShapeComponent, Target};
-use crate::model::shape::Shape;
-use crate::ServerState;
+use crate::{
+    model::{
+        components::{Enemy, Position, ShapeComponent, Target},
+        shape::Shape,
+    },
+    state::ServerState,
+};
 use bevy_ecs::prelude::{Entity, With, Without};
 use std::collections::HashMap;
 use std::time::Duration;

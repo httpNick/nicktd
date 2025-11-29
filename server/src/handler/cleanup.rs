@@ -1,15 +1,9 @@
-use crate::model::game_state::GameState;
-use crate::ServerState;
-use tokio::sync::broadcast;
-use uuid::Uuid;
-
-use crate::broadcast_lobby_status;
+use crate::{model::game_state::GameState, routes::ws::broadcast_lobby_status, state::ServerState};
 
 pub async fn cleanup(
     lobby_id: usize,
-    player_id: Uuid,
+    player_id: i64,
     server_state: &ServerState,
-    lobby_tx: &broadcast::Sender<String>,
 ) {
     {
         let mut lobbies = server_state.lobbies.lock().await;
@@ -20,5 +14,5 @@ pub async fn cleanup(
             }
         }
     }
-    broadcast_lobby_status(server_state, lobby_tx).await;
+    broadcast_lobby_status(server_state).await;
 }

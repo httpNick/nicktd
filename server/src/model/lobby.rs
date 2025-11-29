@@ -3,7 +3,6 @@ use super::player::Player;
 use super::messages::{ServerMessage, Unit, SerializableGameState};
 use tokio::sync::broadcast;
 use super::components::{Enemy, PlayerIdComponent, Position, ShapeComponent};
-use uuid::Uuid;
 
 pub struct Lobby {
     pub game_state: GameState,
@@ -32,7 +31,7 @@ impl Lobby {
                 x: pos.x,
                 y: pos.y,
                 shape: shape.0.clone(),
-                owner_id: maybe_owner.map_or(Uuid::nil(), |owner| owner.0),
+                owner_id: maybe_owner.map_or(-1, |owner| owner.0),
                 is_enemy: maybe_enemy.is_some(),
             }
         }).collect();

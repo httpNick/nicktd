@@ -1,6 +1,17 @@
+// Views
+const authView = document.getElementById('auth-view');
 const lobbySelectionView = document.getElementById('lobby-selection');
 const gameView = document.getElementById('game-view');
+
+// Auth elements
+const registerForm = document.getElementById('register-form');
+const loginForm = document.getElementById('login-form');
+const authStatus = document.getElementById('auth-status');
+
+// Lobby elements
 const lobbyList = document.getElementById('lobby-list');
+
+// Game elements
 const canvas = document.getElementById('gameCanvas');
 const ctx = canvas.getContext('2d');
 const leaveLobbyButton = document.getElementById('leave-lobby');
@@ -16,19 +27,130 @@ let selectedShape = 'Square';
 let gameState = [];
 let selectedTower = null;
 let myPlayerId = null;
+let socket = null;
 
-const socket = new WebSocket('ws://127.0.0.1:9001');
+const API_BASE_URL = 'http://127.0.0.1:9001';
+
+// --- VIEW MANAGEMENT ---
+function showAuthView() {
+    authView.style.display = 'block';
+    lobbySelectionView.style.display = 'none';
+    gameView.style.display = 'none';
+}
 
 function showLobbyView() {
+    authView.style.display = 'none';
     lobbySelectionView.style.display = 'block';
     gameView.style.display = 'none';
 }
 
 function showGameView() {
+    authView.style.display = 'none';
     lobbySelectionView.style.display = 'none';
     gameView.style.display = 'flex';
     initGameView();
 }
+
+// --- AUTHENTICATION LOGIC ---
+registerForm.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const username = document.getElementById('register-username').value;
+    const password = document.getElementById('register-password').value;
+
+    try {
+        const response = await fetch(`${API_BASE_URL}/api/auth/register`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ username, password }),
+        });
+        
+        if (response.ok) {
+            const data = await response.json();
+            authStatus.innerHTML = `<p class="green-text">Registration successful for ${data.username}! Please log in.</p>`;
+            registerForm.reset();
+        } else {
+            const error = await response.json();
+            authStatus.innerHTML = `<p class="red-text">Registration failed: ${error.error}</p>`;
+        }
+    } catch (error) {
+        authStatus.innerHTML = `<p class="red-text">Error: Could not connect to server.</p>`;
+    }
+});
+
+loginForm.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const username = document.getElementById('login-username').value;
+    const password = document.getElementById('login-password').value;
+
+    try {
+        const response = await fetch(`${API_BASE_URL}/api/auth/login`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ username, password }),
+        });
+
+        if (response.ok) {
+            const data = await response.json();
+            localStorage.setItem('jwt', data.token);
+            authStatus.innerHTML = '';
+            connectAndShowLobby();
+        } else {
+            const error = await response.json();
+            authStatus.innerHTML = `<p class="red-text">Login failed: ${error.error}</p>`;
+        }
+    } catch (error) {
+        authStatus.innerHTML = `<p class="red-text">Error: Could not connect to server.</p>`;
+    }
+});
+
+
+// --- WEBSOCKET AND GAME LOGIC ---
+function connectAndShowLobby() {
+    const token = localStorage.getItem('jwt');
+    if (!token) {
+        showAuthView();
+        authStatus.innerHTML = `<p class="red-text">You are not logged in.</p>`;
+        return;
+    }
+
+    socket = new WebSocket(`ws://127.0.0.1:9001/ws?token=${token}`);
+
+    socket.onopen = function() {
+        showLobbyView();
+    };
+
+    socket.onmessage = function(event) {
+        const serverMsg = JSON.parse(event.data);
+        switch (serverMsg.type) {
+            case 'LobbyStatus':
+                renderLobbies(serverMsg.data);
+                break;
+            case 'GameState':
+                if (gameView.style.display === 'none') showGameView();
+                updateGameState(serverMsg.data);
+                break;
+            case 'PlayerId':
+                myPlayerId = serverMsg.data;
+                break;
+            case 'Error':
+                M.toast({html: serverMsg.data});
+                break;
+        }
+    };
+
+    socket.onclose = function() {
+        M.toast({html: 'Disconnected from server.'});
+        localStorage.removeItem('jwt');
+        showAuthView();
+    };
+
+    socket.onerror = function() {
+        M.toast({html: 'WebSocket error.'});
+        localStorage.removeItem('jwt');
+        showAuthView();
+    };
+}
+
 
 function renderLobbies(lobbies) {
     lobbyList.innerHTML = '';
@@ -144,29 +266,12 @@ function initGameView() {
     });
 }
 
-socket.onmessage = function(event) {
-    const serverMsg = JSON.parse(event.data);
-    switch (serverMsg.type) {
-        case 'LobbyStatus':
-            renderLobbies(serverMsg.data);
-            break;
-        case 'GameState':
-            if (gameView.style.display === 'none') showGameView();
-            updateGameState(serverMsg.data);
-            break;
-        case 'PlayerId':
-            myPlayerId = serverMsg.data;
-            break;
-        case 'Error':
-            M.toast({html: serverMsg.data});
-            break;
-    }
-};
-
 leaveLobbyButton.onclick = () => {
     socket.send(JSON.stringify({ action: 'leaveLobby' }));
     hideUiPanel();
     showLobbyView();
 };
 
-showLobbyView();
+// --- INITIALIZATION ---
+// On page load, show the authentication view.
+showAuthView();

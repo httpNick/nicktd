@@ -1,5 +1,4 @@
 use serde::{Deserialize, Serialize};
-use uuid::Uuid;
 use super::shape::Shape;
 use super::game_state::GamePhase;
 
@@ -27,7 +26,7 @@ pub struct Unit {
     pub shape: Shape,
     pub x: f32,
     pub y: f32,
-    pub owner_id: Uuid,
+    pub owner_id: i64,
     pub is_enemy: bool,
 }
 
@@ -43,6 +42,6 @@ pub struct SerializableGameState {
 pub enum ServerMessage {
     LobbyStatus(Vec<LobbyInfo>),
     GameState(SerializableGameState),
-    PlayerId(Uuid),
+    PlayerId(i64),
     Error(String),
 }

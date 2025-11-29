@@ -1,21 +1,31 @@
-use crate::model::components::{PlayerIdComponent, Position, ShapeComponent};
-use crate::model::messages::ClientMessage;
-use crate::ServerState;
+use crate::{
+    model::{
+        components::{PlayerIdComponent, Position, ShapeComponent},
+        messages::ClientMessage,
+    },
+    state::{ServerState, UpgradedWebSocket},
+};
 use bevy_ecs::prelude::Entity;
-use futures_util::{stream::SplitSink, SinkExt, StreamExt};
-use tokio::net::TcpStream;
-use tokio_tungstenite::{tungstenite::Message, WebSocketStream};
-use uuid::Uuid;
+use futures_util::{
+    stream::{SplitSink, SplitStream},
+    SinkExt, StreamExt,
+};
+use tokio_tungstenite::tungstenite::Message;
 
 const SQUARE_SIZE: u32 = 60;
 
+pub enum InGameLoopResult {
+    PlayerLeft,
+    ClientDisconnected,
+}
+
 pub async fn in_game_loop(
-    ws_sender: &mut SplitSink<WebSocketStream<TcpStream>, Message>,
-    ws_receiver: &mut futures_util::stream::SplitStream<WebSocketStream<TcpStream>>,
+    ws_sender: &mut SplitSink<UpgradedWebSocket, Message>,
+    ws_receiver: &mut SplitStream<UpgradedWebSocket>,
     server_state: &ServerState,
     lobby_id: usize,
-    player_id: Uuid,
-) {
+    player_id: i64,
+) -> InGameLoopResult {
     let mut game_rx = {
         let lobbies = server_state.lobbies.lock().await;
         lobbies[lobby_id].tx.subscribe()
@@ -66,17 +76,17 @@ pub async fn in_game_loop(
                                     ClientMessage::SkipToCombat => {
                                         lobby.game_state.phase_timer = 0.0;
                                     }
-                                    ClientMessage::LeaveLobby => break,
+                                    ClientMessage::LeaveLobby => break InGameLoopResult::PlayerLeft,
                                     _ => {}
                                 }
                             }
                         }
                     },
-                    Some(Err(_)) | None => break,
+                    Some(Err(_)) | None => break InGameLoopResult::ClientDisconnected,
                 }
             },
             Ok(msg) = game_rx.recv() => {
-                if ws_sender.send(Message::Text(msg)).await.is_err() { break; }
+                if ws_sender.send(Message::Text(msg.into())).await.is_err() { break InGameLoopResult::ClientDisconnected; }
             }
         }
     }
