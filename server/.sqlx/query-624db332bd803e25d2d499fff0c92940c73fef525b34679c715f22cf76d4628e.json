@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE accounts SET session_id = NULL, session_expires_at = NULL WHERE id = ?",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": []
+  },
+  "hash": "624db332bd803e25d2d499fff0c92940c73fef525b34679c715f22cf76d4628e"
+}

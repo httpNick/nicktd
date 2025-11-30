@@ -3,6 +3,7 @@ use crate::{
     model::{account::NewAccount, jwt},
     state::ServerState,
 };
+use chrono::{Duration, Utc};
 use http_body_util::{BodyExt, Full};
 use hyper::{
     body::{Bytes, Incoming as Body},
@@ -65,6 +66,9 @@ pub async fn handle_register(
     }
 }
 
+
+use uuid::Uuid;
+
 pub async fn handle_login(
     req: hyper::Request<Body>,
     state: ServerState,
@@ -83,22 +87,68 @@ pub async fn handle_login(
         Ok(payload) => {
             match database::get_account_by_username(&state.db_pool, &payload.username).await {
                 Ok(Some(account)) => {
-                    if database::verify_password(&payload.password, &account.password_hash).await {
-                        match jwt::create_jwt(account.username) {
-                            Ok(token) => Response::builder()
-                                .status(StatusCode::OK)
+                    // Check if there is an active session
+                    if let (Some(_), Some(expires_at)) =
+                        (account.session_id, account.session_expires_at)
+                    {
+                        if expires_at.and_utc() > Utc::now() {
+                            return Response::builder()
+                                .status(StatusCode::CONFLICT)
                                 .header(header::CONTENT_TYPE, "application/json")
                                 .body(Full::new(Bytes::from(
-                                    serde_json::to_string(&serde_json::json!({ "token": token }))
-                                        .unwrap(),
+                                    serde_json::to_string(
+                                        &serde_json::json!({"error": "Account is already logged in"}),
+                                    )
+                                    .unwrap(),
                                 )))
-                                .unwrap(),
+                                .unwrap();
+                        }
+                    }
+
+                    if database::verify_password(&payload.password, &account.password_hash).await {
+                        let session_id = Uuid::new_v4().to_string();
+                        let expires_at = Utc::now() + Duration::hours(24);
+
+                        match database::update_session(
+                            &state.db_pool,
+                            account.id,
+                            &session_id,
+                            expires_at,
+                        )
+                        .await
+                        {
+                            Ok(_) => match jwt::create_jwt(
+                                account.username,
+                                session_id,
+                                expires_at,
+                            ) {
+                                Ok(token) => Response::builder()
+                                    .status(StatusCode::OK)
+                                    .header(header::CONTENT_TYPE, "application/json")
+                                    .body(Full::new(Bytes::from(
+                                        serde_json::to_string(
+                                            &serde_json::json!({ "token": token }),
+                                        )
+                                        .unwrap(),
+                                    )))
+                                    .unwrap(),
+                                Err(_) => Response::builder()
+                                    .status(StatusCode::INTERNAL_SERVER_ERROR)
+                                    .header(header::CONTENT_TYPE, "application/json")
+                                    .body(Full::new(Bytes::from(
+                                        serde_json::to_string(
+                                            &serde_json::json!({"error": "Failed to create token"}),
+                                        )
+                                        .unwrap(),
+                                    )))
+                                    .unwrap(),
+                            },
                             Err(_) => Response::builder()
                                 .status(StatusCode::INTERNAL_SERVER_ERROR)
                                 .header(header::CONTENT_TYPE, "application/json")
                                 .body(Full::new(Bytes::from(
                                     serde_json::to_string(
-                                        &serde_json::json!({"error": "Failed to create token"}),
+                                        &serde_json::json!({"error": "Failed to update session"}),
                                     )
                                     .unwrap(),
                                 )))
@@ -132,4 +182,51 @@ pub async fn handle_login(
             .body(Full::new(Bytes::from("Invalid request payload")))
             .unwrap(),
     }
+}
+
+pub async fn handle_logout(
+    req: hyper::Request<Body>,
+    state: ServerState,
+) -> Response<Full<Bytes>> {
+    let auth_header = req.headers().get(header::AUTHORIZATION);
+    if let Some(auth_header) = auth_header {
+        if let Ok(auth_str) = auth_header.to_str() {
+            if auth_str.starts_with("Bearer ") {
+                let token = &auth_str[7..];
+                if let Ok(claims) = jwt::decode_jwt(token) {
+                    if let Ok(Some(account)) =
+                        database::get_account_by_username(&state.db_pool, &claims.sub).await
+                    {
+                        // Check if the session ID in the token matches the one in the database
+                        if account.session_id.as_deref() == Some(&claims.sid) {
+                            if let Err(e) = database::clear_session(&state.db_pool, account.id).await
+                            {
+                                error!("Failed to clear session: {}", e);
+                                return Response::builder()
+                                    .status(StatusCode::INTERNAL_SERVER_ERROR)
+                                    .header(header::CONTENT_TYPE, "application/json")
+                                    .body(Full::new(Bytes::from(
+                                        serde_json::to_string(
+                                            &serde_json::json!({"error": "Failed to logout"}),
+                                        )
+                                        .unwrap(),
+                                    )))
+                                    .unwrap();
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    // Always return OK, even if the token is invalid or the session doesn't exist.
+    // This prevents leaking information about session validity.
+    Response::builder()
+        .status(StatusCode::OK)
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(Full::new(Bytes::from(
+            serde_json::to_string(&serde_json::json!({"message": "Logged out successfully"}))
+                .unwrap(),
+        )))
+        .unwrap()
 }

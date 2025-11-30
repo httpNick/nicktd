@@ -8,7 +8,6 @@ use hyper::{
     header, Method, Request, Response, StatusCode,
 };
 
-// Main router function to dispatch requests
 pub async fn router(
     mut req: Request<Body>,
     state: ServerState,
@@ -24,6 +23,9 @@ pub async fn router(
             }
             (&Method::POST, "/api/auth/login") => {
                 response = auth::handle_login(req, state).await;
+            }
+            (&Method::POST, "/api/auth/logout") => {
+                response = auth::handle_logout(req, state).await;
             }
             (&Method::GET, "/ws") => {
                 response = ws::handle_ws_upgrade(&mut req, state).await;
@@ -46,7 +48,7 @@ pub async fn router(
     );
     headers.insert(
         header::ACCESS_CONTROL_ALLOW_HEADERS,
-        "Content-Type".parse().unwrap(),
+        "Content-Type, Authorization".parse().unwrap(),
     );
 
     Ok(response)
