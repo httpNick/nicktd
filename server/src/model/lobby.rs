@@ -38,6 +38,7 @@ impl Lobby {
 
         let serializable_state = SerializableGameState {
             units,
+            players: self.players.clone(),
             phase: self.game_state.phase,
             phase_timer: self.game_state.phase_timer,
         };
@@ -58,5 +59,18 @@ mod tests {
         let rx = lobby.tx.subscribe();
         drop(rx); // the player leaves
         lobby.broadcast_gamestate();
+    }
+
+    #[test]
+    fn broadcast_gamestate_includes_players_and_gold() {
+        let mut lobby = Lobby::new();
+        lobby.players.push(Player { id: 1, username: "test".to_string(), gold: 100 });
+        
+        let mut rx = lobby.tx.subscribe();
+        lobby.broadcast_gamestate();
+        
+        let msg = rx.try_recv().unwrap();
+        assert!(msg.contains("\"players\":"));
+        assert!(msg.contains("\"gold\":100"));
     }
 }

@@ -20,11 +20,14 @@ const towerTypeEl = document.getElementById('tower-type');
 const sellButton = document.getElementById('sell-button');
 const gamePhaseEl = document.getElementById('game-phase');
 const gameTimerEl = document.getElementById('game-timer');
+const goldDisplay = document.getElementById('gold-display');
+const hireWorkerBtn = document.getElementById('hire-worker-btn');
 
 const BOARD_SIZE = 10;
-const SQUARE_SIZE = canvas.width / BOARD_SIZE;
+const SQUARE_SIZE = 60; // Hardcoded to match canvas/board ratio
 let selectedShape = 'Square';
 let gameState = [];
+let currentPlayers = [];
 let selectedTower = null;
 let myPlayerId = null;
 let socket = null;
@@ -184,6 +187,49 @@ function drawCheckerboard() {
     }
 }
 
+function drawWorkerArea() {
+    // Divider
+    ctx.beginPath();
+    ctx.moveTo(600, 0);
+    ctx.lineTo(600, 600);
+    ctx.strokeStyle = '#FFF';
+    ctx.stroke();
+
+    // Horizontal Divider
+    ctx.beginPath();
+    ctx.moveTo(600, 300);
+    ctx.lineTo(800, 300); // Assuming canvas width allows
+    ctx.stroke();
+
+    currentPlayers.forEach((player, index) => {
+        const veinY = index === 0 ? 50 : 350;
+        const cartY = index === 0 ? 250 : 550;
+        const labelY = index === 0 ? 20 : 320;
+
+        // Player Label
+        ctx.fillStyle = '#FFF';
+        ctx.font = '16px Arial';
+        ctx.fillText(player.username || `Player ${index+1}`, 610, labelY);
+        
+        // Gold Amount
+        ctx.fillText(`Gold: ${player.gold}`, 720, labelY);
+
+        // Gold Vein
+        ctx.fillStyle = '#FFD700'; // Gold
+        ctx.beginPath();
+        ctx.arc(700, veinY, 20, 0, 2 * Math.PI);
+        ctx.fill();
+        ctx.fillStyle = '#000';
+        ctx.fillText("Vein", 685, veinY + 5);
+
+        // Gold Cart
+        ctx.fillStyle = '#8B4513'; // SaddleBrown
+        ctx.fillRect(680, cartY - 20, 40, 40);
+        ctx.fillStyle = '#FFF';
+        ctx.fillText("Cart", 685, cartY + 5);
+    });
+}
+
 function drawUnits(units) {
     units.forEach(unit => {
         const { shape, x, y, owner_id, is_enemy } = unit;
@@ -205,10 +251,16 @@ function drawUnits(units) {
 
 function updateGameState(newState) {
     gameState = newState.units;
+    if (newState.players) {
+        currentPlayers = newState.players;
+        const me = newState.players.find(p => p.id === myPlayerId);
+        if (me) goldDisplay.textContent = me.gold;
+    }
     gamePhaseEl.textContent = newState.phase;
     gameTimerEl.textContent = newState.phase_timer.toFixed(1);
     ctx.clearRect(0, 0, canvas.width, canvas.height);
     drawCheckerboard();
+    drawWorkerArea();
     drawUnits(gameState);
 }
 
@@ -229,6 +281,11 @@ function initGameView() {
     document.getElementById('selectSquare').onclick = () => { selectedShape = 'Square'; };
     document.getElementById('selectCircle').onclick = () => { selectedShape = 'Circle'; };
     document.getElementById('selectTriangle').onclick = () => { selectedShape = 'Triangle'; };
+    hireWorkerBtn.onclick = () => {
+        if (socket && socket.readyState === WebSocket.OPEN) {
+            socket.send(JSON.stringify({ action: 'hireWorker', payload: {} }));
+        }
+    };
     document.getElementById('skip-to-combat').onclick = () => {
         socket.send(JSON.stringify({ action: 'skipToCombat' }));
     };
@@ -238,6 +295,9 @@ function initGameView() {
         const clickX = event.clientX - rect.left;
         const clickY = event.clientY - rect.top;
         
+        // Ignore clicks in worker area for placement
+        if (clickX > 600) return;
+
         const towerSize = SQUARE_SIZE - 20;
         const clickedTower = gameState.find(s => {
             return !s.is_enemy && clickX >= s.x - towerSize / 2 && clickX <= s.x + towerSize / 2 &&
@@ -254,6 +314,7 @@ function initGameView() {
             if (socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify(placeMessage));
         }
     });
+
 
     sellButton.addEventListener('click', function() {
         if (selectedTower && selectedTower.owner_id === myPlayerId) {

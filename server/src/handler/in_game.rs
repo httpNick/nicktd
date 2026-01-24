@@ -1,6 +1,6 @@
 use crate::{
     model::{
-        components::{PlayerIdComponent, Position, ShapeComponent},
+        components::{PlayerIdComponent, Position, ShapeComponent, TargetPositions},
         messages::ClientMessage,
     },
     state::{ServerState, UpgradedWebSocket},
@@ -75,6 +75,29 @@ pub async fn in_game_loop(
                                     }
                                     ClientMessage::SkipToCombat => {
                                         lobby.game_state.phase_timer = 0.0;
+                                    }
+                                    ClientMessage::HireWorker {} => {
+                                        let player_idx = lobby.players.iter().position(|p| p.id == player_id);
+                                        if let Some(idx) = player_idx {
+                                            if lobby.players[idx].gold >= 50 {
+                                                lobby.players[idx].gold -= 50;
+                                                
+                                                let targets = TargetPositions {
+                                                    vein: crate::handler::game_loop::VEIN_POSITIONS[idx],
+                                                    cart: crate::handler::game_loop::CART_POSITIONS[idx],
+                                                };
+
+                                                lobby.game_state.world.spawn((
+                                                    targets.cart, // Start at cart
+                                                    ShapeComponent(crate::model::shape::Shape::Circle),
+                                                    PlayerIdComponent(player_id),
+                                                    crate::model::components::Worker,
+                                                    crate::model::components::WorkerState::MovingToVein,
+                                                    targets,
+                                                ));
+                                                lobby.broadcast_gamestate();
+                                            }
+                                        }
                                     }
                                     ClientMessage::LeaveLobby => break InGameLoopResult::PlayerLeft,
                                     _ => {}

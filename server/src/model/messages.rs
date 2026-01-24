@@ -1,9 +1,11 @@
 use serde::{Deserialize, Serialize};
 use super::shape::Shape;
 use super::game_state::GamePhase;
+use super::player::Player;
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct PlaceMessage { pub shape: Shape, pub row: u32, pub col: u32, }
+
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct SellMessage { pub row: u32, pub col: u32, }
@@ -16,6 +18,7 @@ pub enum ClientMessage {
     Sell(SellMessage),
     SkipToCombat,
     LeaveLobby,
+    HireWorker {},
 }
 
 #[derive(Serialize, Clone, Debug)]
@@ -33,6 +36,7 @@ pub struct Unit {
 #[derive(Serialize, Clone, Debug)]
 pub struct SerializableGameState {
     pub units: Vec<Unit>,
+    pub players: Vec<Player>,
     pub phase: GamePhase,
     pub phase_timer: f32,
 }
@@ -44,4 +48,19 @@ pub enum ServerMessage {
     GameState(SerializableGameState),
     PlayerId(i64),
     Error(String),
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn deserialize_hire_worker() {
+        let json = r#"{"action": "hireWorker", "payload": {}}"#;
+        let msg: ClientMessage = serde_json::from_str(json).unwrap();
+        match msg {
+            ClientMessage::HireWorker {} => assert!(true),
+            _ => panic!("Wrong message type"),
+        }
+    }
 }

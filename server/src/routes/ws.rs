@@ -58,7 +58,7 @@ pub async fn handle_ws_upgrade(
     tokio::spawn(async move {
         match websocket.await {
             Ok(ws_stream) => {
-                handle_connection(ws_stream, state, authenticated_account.id).await;
+                handle_connection(ws_stream, state, authenticated_account.id, authenticated_account.username).await;
             }
             Err(e) => {
                 error!("WebSocket upgrade error after handshake: {}", e);
@@ -112,6 +112,7 @@ async fn handle_connection(
     ws_stream: UpgradedWebSocket,
     server_state: ServerState,
     account_id: i64,
+    username: String,
 ) {
     let (mut ws_sender, mut ws_receiver) = ws_stream.split();
 
@@ -153,6 +154,7 @@ async fn handle_connection(
             &server_state,
             &mut lobby_rx,
             account_id,
+            username.clone(),
         )
         .await
         {

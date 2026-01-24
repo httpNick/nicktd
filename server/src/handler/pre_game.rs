@@ -19,6 +19,7 @@ pub async fn pre_game_loop(
     server_state: &ServerState,
     lobby_rx: &mut broadcast::Receiver<String>,
     player_id: i64,
+    username: String,
 ) -> Option<usize> {
     let mut lobby_id_opt: Option<usize> = None;
 
@@ -39,7 +40,7 @@ pub async fn pre_game_loop(
                                     let mut lobbies = server_state.lobbies.lock().await;
                                     if let Some(lobby) = lobbies.get_mut(lobby_id) {
                                         if lobby.players.len() < 2 {
-                                            lobby.players.push(Player { id: player_id });
+                                            lobby.players.push(Player { id: player_id, username: username.clone(), gold: 100 });
                                             if lobby.players.len() == 2 {
                                                 tokio::spawn(crate::handler::game_loop::run_game_loop(server_state.clone(), lobby_id));
                                             }
