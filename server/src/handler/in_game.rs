@@ -10,6 +10,7 @@ use futures_util::{
     stream::{SplitSink, SplitStream},
     SinkExt, StreamExt,
 };
+use tokio::sync::mpsc;
 use tokio_tungstenite::tungstenite::Message;
 
 const SQUARE_SIZE: u32 = 60;
@@ -17,6 +18,7 @@ const SQUARE_SIZE: u32 = 60;
 pub enum InGameLoopResult {
     PlayerLeft,
     ClientDisconnected,
+    ForceDisconnect,
 }
 
 pub async fn in_game_loop(
@@ -25,6 +27,7 @@ pub async fn in_game_loop(
     server_state: &ServerState,
     lobby_id: usize,
     player_id: i64,
+    shutdown_rx: &mut mpsc::Receiver<()>,
 ) -> InGameLoopResult {
     let mut game_rx = {
         let lobbies = server_state.lobbies.lock().await;
@@ -34,6 +37,9 @@ pub async fn in_game_loop(
 
     loop {
         tokio::select! {
+            _ = shutdown_rx.recv() => {
+                break InGameLoopResult::ForceDisconnect;
+            },
             maybe_msg = ws_receiver.next() => {
                 match maybe_msg {
                     Some(Ok(msg)) => {

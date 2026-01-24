@@ -10,8 +10,14 @@ use futures_util::{
     stream::{SplitSink, SplitStream},
     SinkExt, StreamExt,
 };
-use tokio::sync::broadcast;
+use tokio::sync::{broadcast, mpsc};
 use tokio_tungstenite::tungstenite::Message;
+
+pub enum PreGameLoopResult {
+    Joined(usize),
+    ClientDisconnected,
+    ForceDisconnect,
+}
 
 pub async fn pre_game_loop(
     ws_sender: &mut SplitSink<UpgradedWebSocket, Message>,
@@ -20,11 +26,16 @@ pub async fn pre_game_loop(
     lobby_rx: &mut broadcast::Receiver<String>,
     player_id: i64,
     username: String,
-) -> Option<usize> {
-    let mut lobby_id_opt: Option<usize> = None;
+    shutdown_rx: &mut mpsc::Receiver<()>,
+) -> PreGameLoopResult {
+    let mut result = PreGameLoopResult::ClientDisconnected;
 
     loop {
         tokio::select! {
+            _ = shutdown_rx.recv() => {
+                result = PreGameLoopResult::ForceDisconnect;
+                break;
+            },
             Ok(msg) = lobby_rx.recv() => {
                 if ws_sender.send(Message::Text(msg.into())).await.is_err() {
                     break;
@@ -44,7 +55,7 @@ pub async fn pre_game_loop(
                                             if lobby.players.len() == 2 {
                                                 tokio::spawn(crate::handler::game_loop::run_game_loop(server_state.clone(), lobby_id));
                                             }
-                                            lobby_id_opt = Some(lobby_id);
+                                            result = PreGameLoopResult::Joined(lobby_id);
                                             should_break = true;
                                         } else {
                                             let _ = send_message(ws_sender, ServerMessage::Error("Lobby is full".into())).await;
@@ -69,5 +80,5 @@ pub async fn pre_game_loop(
         }
     }
 
-    lobby_id_opt
+    result
 }

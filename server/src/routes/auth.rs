@@ -87,24 +87,6 @@ pub async fn handle_login(
         Ok(payload) => {
             match database::get_account_by_username(&state.db_pool, &payload.username).await {
                 Ok(Some(account)) => {
-                    // Check if there is an active session
-                    if let (Some(_), Some(expires_at)) =
-                        (account.session_id, account.session_expires_at)
-                    {
-                        if expires_at.and_utc() > Utc::now() {
-                            return Response::builder()
-                                .status(StatusCode::CONFLICT)
-                                .header(header::CONTENT_TYPE, "application/json")
-                                .body(Full::new(Bytes::from(
-                                    serde_json::to_string(
-                                        &serde_json::json!({"error": "Account is already logged in"}),
-                                    )
-                                    .unwrap(),
-                                )))
-                                .unwrap();
-                        }
-                    }
-
                     if database::verify_password(&payload.password, &account.password_hash).await {
                         let session_id = Uuid::new_v4().to_string();
                         let expires_at = Utc::now() + Duration::hours(24);

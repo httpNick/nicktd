@@ -23,6 +23,7 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         lobbies: Mutex::new((0..NUM_LOBBIES).map(|_| Lobby::new()).collect()),
         db_pool,
         lobby_tx,
+        active_connections: Mutex::new(std::collections::HashMap::new()),
     });
 
     let addr = SocketAddr::from(([0, 0, 0, 0], 9001));

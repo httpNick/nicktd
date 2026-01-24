@@ -15,6 +15,7 @@ use hyper::body::{Bytes, Incoming as Body};
 use hyper::{Request, Response, StatusCode};
 use log::error;
 use std::collections::HashMap;
+use tokio::sync::mpsc;
 use tokio_tungstenite::tungstenite::protocol::Message;
 
 pub async fn handle_ws_upgrade(
@@ -114,16 +115,29 @@ async fn handle_connection(
     account_id: i64,
     username: String,
 ) {
+    // 1. Manage Active Connection
+    let (kill_tx, mut kill_rx) = mpsc::channel(1);
+    {
+        let mut active_conns = server_state.active_connections.lock().await;
+        if let Some(old_tx) = active_conns.get(&account_id) {
+            let _ = old_tx.send(()).await; // Kill existing connection
+        }
+        active_conns.insert(account_id, kill_tx);
+    }
+
     let (mut ws_sender, mut ws_receiver) = ws_stream.split();
 
     if send_message(&mut ws_sender, ServerMessage::PlayerId(account_id))
         .await
         .is_err()
     {
+        // Cleanup on early failure
+        server_state.active_connections.lock().await.remove(&account_id);
         return;
     }
 
     let mut final_lobby_id: Option<usize> = None; // To store lobby_id for cleanup outside the loop
+    let mut forced_disconnect = false;
 
     loop {
         // on a new connection send the lobby status to the client.
@@ -148,32 +162,52 @@ async fn handle_connection(
 
         let mut lobby_rx = server_state.lobby_tx.subscribe();
 
-        if let Some(lobby_id) = handler::pre_game::pre_game_loop(
+        match handler::pre_game::pre_game_loop(
             &mut ws_sender,
             &mut ws_receiver,
             &server_state,
             &mut lobby_rx,
             account_id,
             username.clone(),
+            &mut kill_rx,
         )
         .await
         {
-            final_lobby_id = Some(lobby_id); // Store lobby_id here
-            let result = handler::in_game::in_game_loop(
-                &mut ws_sender,
-                &mut ws_receiver,
-                &server_state,
-                lobby_id,
-                account_id,
-            )
-            .await;
+            handler::pre_game::PreGameLoopResult::Joined(lobby_id) => {
+                final_lobby_id = Some(lobby_id); // Store lobby_id here
+                let result = handler::in_game::in_game_loop(
+                    &mut ws_sender,
+                    &mut ws_receiver,
+                    &server_state,
+                    lobby_id,
+                    account_id,
+                    &mut kill_rx,
+                )
+                .await;
 
-            match result {
-                handler::in_game::InGameLoopResult::PlayerLeft => continue,
-                handler::in_game::InGameLoopResult::ClientDisconnected => break,
+                match result {
+                    handler::in_game::InGameLoopResult::PlayerLeft => {
+                        handler::cleanup::remove_player_from_lobby(lobby_id, account_id, &server_state).await;
+                        final_lobby_id = None;
+                        continue;
+                    },
+                    handler::in_game::InGameLoopResult::ClientDisconnected => break,
+                    handler::in_game::InGameLoopResult::ForceDisconnect => {
+                        forced_disconnect = true;
+                        // Send error message to client before closing
+                        let _ = send_message(&mut ws_sender, ServerMessage::Error("Logged in from another location".into())).await;
+                        break;
+                    }
+                }
             }
-        } else {
-            break;
+            handler::pre_game::PreGameLoopResult::ForceDisconnect => {
+                 forced_disconnect = true;
+                 let _ = send_message(&mut ws_sender, ServerMessage::Error("Logged in from another location".into())).await;
+                 break;
+            }
+            handler::pre_game::PreGameLoopResult::ClientDisconnected => {
+                break;
+            }
         }
     }
 
@@ -181,10 +215,24 @@ async fn handle_connection(
     if let Some(lobby_id) = final_lobby_id {
         handler::cleanup::cleanup(lobby_id, account_id, &server_state).await;
     } else {
-        // If final_lobby_id is None, it means the player disconnected before joining any lobby via pre_game_loop
-        // We still need to clear their session in case it was created via initial login but never entered a game phase.
-        if let Err(e) = database::clear_session(&server_state.db_pool, account_id).await {
-            log::error!("Failed to clear session for player {}: {}", account_id, e);
+        // Only clear session if this wasn't a forced disconnect (i.e. replaced by new session)
+        if !forced_disconnect {
+             if let Err(e) = database::clear_session(&server_state.db_pool, account_id).await {
+                log::error!("Failed to clear session for player {}: {}", account_id, e);
+            }
+        }
+    }
+
+    // Remove from active connections map IF it is still THIS connection
+    // (We don't want to remove the NEW connection if we were just killed by it)
+    {
+        let mut active_conns = server_state.active_connections.lock().await;
+        // Optimization: We can't easily check if the value in the map is *our* sender 
+        // without comparing pointers or IDs, but Sender doesn't expose that easily.
+        // However, if we were forced_disconnect, we know the map has already been updated 
+        // with the NEW sender, so we should NOT remove it.
+        if !forced_disconnect {
+            active_conns.remove(&account_id);
         }
     }
 }

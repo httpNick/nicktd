@@ -1,7 +1,6 @@
 use crate::{database, model::game_state::GameState, routes::ws::broadcast_lobby_status, state::ServerState};
 
-
-pub async fn cleanup(
+pub async fn remove_player_from_lobby(
     lobby_id: usize,
     player_id: i64,
     server_state: &ServerState,
@@ -15,8 +14,16 @@ pub async fn cleanup(
             }
         }
     }
+    broadcast_lobby_status(server_state).await;
+}
+
+pub async fn cleanup(
+    lobby_id: usize,
+    player_id: i64,
+    server_state: &ServerState,
+) {
+    remove_player_from_lobby(lobby_id, player_id, server_state).await;
     if let Err(e) = database::clear_session(&server_state.db_pool, player_id).await {
         log::error!("Failed to clear session for player {}: {}", player_id, e);
     }
-    broadcast_lobby_status(server_state).await;
 }

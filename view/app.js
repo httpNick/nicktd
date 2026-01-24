@@ -31,6 +31,7 @@ let currentPlayers = [];
 let selectedTower = null;
 let myPlayerId = null;
 let socket = null;
+let isInGame = false;
 
 const API_BASE_URL = 'http://127.0.0.1:9001';
 
@@ -129,6 +130,7 @@ function connectAndShowLobby() {
                 renderLobbies(serverMsg.data);
                 break;
             case 'GameState':
+                if (!isInGame) return;
                 if (gameView.style.display === 'none') showGameView();
                 updateGameState(serverMsg.data);
                 break;
@@ -136,18 +138,21 @@ function connectAndShowLobby() {
                 myPlayerId = serverMsg.data;
                 break;
             case 'Error':
+                isInGame = false;
                 M.toast({html: serverMsg.data});
                 break;
         }
     };
 
     socket.onclose = function() {
+        isInGame = false;
         M.toast({html: 'Disconnected from server.'});
         localStorage.removeItem('jwt');
         showAuthView();
     };
 
     socket.onerror = function() {
+        isInGame = false;
         M.toast({html: 'WebSocket error.'});
         localStorage.removeItem('jwt');
         showAuthView();
@@ -171,6 +176,7 @@ function renderLobbies(lobbies) {
         if (!button.hasAttribute('disabled')) {
             button.addEventListener('click', (e) => {
                 e.preventDefault();
+                isInGame = true;
                 const lobbyId = parseInt(e.target.getAttribute('data-lobby-id'));
                 socket.send(JSON.stringify({ action: 'joinLobby', payload: lobbyId }));
             });
@@ -328,6 +334,7 @@ function initGameView() {
 }
 
 leaveLobbyButton.onclick = () => {
+    isInGame = false;
     socket.send(JSON.stringify({ action: 'leaveLobby' }));
     hideUiPanel();
     showLobbyView();
