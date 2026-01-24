@@ -13,6 +13,18 @@ pub struct ServerStateData {
     pub lobby_tx: broadcast::Sender<String>,
     pub active_connections: Mutex<HashMap<i64, mpsc::Sender<()>>>,
 }
+impl ServerStateData {
+    pub fn new(db_pool: SqlitePool) -> Arc<Self> {
+        let lobbies = (0..5).map(|_| Lobby::new()).collect();
+        let (lobby_tx, _) = broadcast::channel(100);
+        Arc::new(Self {
+            lobbies: Mutex::new(lobbies),
+            db_pool,
+            lobby_tx,
+            active_connections: Mutex::new(HashMap::new()),
+        })
+    }
+}
 
 pub type ServerState = Arc<ServerStateData>;
 

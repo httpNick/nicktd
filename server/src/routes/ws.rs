@@ -174,6 +174,10 @@ async fn handle_connection(
         .await
         {
             handler::pre_game::PreGameLoopResult::Joined(lobby_id) => {
+                if let Some(old_lobby_id) = final_lobby_id {
+                    log::info!("Player {} joining new lobby {}, removing from old lobby {}", account_id, lobby_id, old_lobby_id);
+                    handler::cleanup::remove_player_from_lobby(old_lobby_id, account_id, &server_state).await;
+                }
                 final_lobby_id = Some(lobby_id); // Store lobby_id here
                 let result = handler::in_game::in_game_loop(
                     &mut ws_sender,

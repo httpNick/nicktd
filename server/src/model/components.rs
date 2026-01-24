@@ -39,9 +39,24 @@ pub enum WorkerState {
 #[derive(Component)]
 pub struct MiningTimer(pub f32);
 
+#[derive(Component, Clone, Copy, Debug, PartialEq)]
+pub struct CollisionRadius(pub f32);
+
+#[derive(Component, Clone, Copy, Debug, PartialEq)]
+pub struct AttackRange(pub f32);
+
+#[derive(Component)]
+pub struct InAttackRange;
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn physical_components_exist() {
+        let _ = CollisionRadius(5.0);
+        let _ = AttackRange(20.0);
+    }
 
     #[test]
     fn worker_components_exist() {

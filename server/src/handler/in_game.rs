@@ -1,6 +1,6 @@
 use crate::{
     model::{
-        components::{PlayerIdComponent, Position, ShapeComponent, TargetPositions},
+        components::{PlayerIdComponent, Position, TargetPositions},
         messages::ClientMessage,
     },
     state::{ServerState, UpgradedWebSocket},
@@ -52,11 +52,12 @@ pub async fn in_game_loop(
                                         let x = (p.col * SQUARE_SIZE) as f32 + (SQUARE_SIZE as f32 / 2.0);
                                         let y = (p.row * SQUARE_SIZE) as f32 + (SQUARE_SIZE as f32 / 2.0);
 
-                                        lobby.game_state.world.spawn((
+                                        crate::handler::spawn::spawn_unit(
+                                            &mut lobby.game_state.world,
                                             Position { x, y },
-                                            ShapeComponent(p.shape),
-                                            PlayerIdComponent(player_id),
-                                        ));
+                                            p.shape,
+                                            player_id,
+                                        );
                                         lobby.broadcast_gamestate();
                                     }
                                     ClientMessage::Sell(s) => {
@@ -89,18 +90,15 @@ pub async fn in_game_loop(
                                                 lobby.players[idx].gold -= 50;
                                                 
                                                 let targets = TargetPositions {
-                                                    vein: crate::handler::game_loop::VEIN_POSITIONS[idx],
-                                                    cart: crate::handler::game_loop::CART_POSITIONS[idx],
+                                                    vein: crate::handler::worker::VEIN_POSITIONS[idx],
+                                                    cart: crate::handler::worker::CART_POSITIONS[idx],
                                                 };
 
-                                                lobby.game_state.world.spawn((
-                                                    targets.cart, // Start at cart
-                                                    ShapeComponent(crate::model::shape::Shape::Circle),
-                                                    PlayerIdComponent(player_id),
-                                                    crate::model::components::Worker,
-                                                    crate::model::components::WorkerState::MovingToVein,
+                                                crate::handler::spawn::spawn_worker(
+                                                    &mut lobby.game_state.world,
+                                                    player_id,
                                                     targets,
-                                                ));
+                                                );
                                                 lobby.broadcast_gamestate();
                                             }
                                         }

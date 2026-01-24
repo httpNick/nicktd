@@ -1,6 +1,5 @@
 use crate::{
     database,
-    model::lobby::Lobby,
     router::router,
     state::ServerStateData,
 };
@@ -9,22 +8,11 @@ use hyper::service::service_fn;
 use hyper_util::rt::TokioIo;
 use log::{error, info};
 use std::net::SocketAddr;
-use std::sync::Arc;
 use tokio::net::TcpListener;
-use tokio::sync::{broadcast, Mutex};
-
-const NUM_LOBBIES: usize = 5;
 
 pub async fn run() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let db_pool = database::init_db().await.unwrap();
-    let (lobby_tx, _) = broadcast::channel(16);
-
-    let server_state = Arc::new(ServerStateData {
-        lobbies: Mutex::new((0..NUM_LOBBIES).map(|_| Lobby::new()).collect()),
-        db_pool,
-        lobby_tx,
-        active_connections: Mutex::new(std::collections::HashMap::new()),
-    });
+    let server_state = ServerStateData::new(db_pool);
 
     let addr = SocketAddr::from(([0, 0, 0, 0], 9001));
     let listener = TcpListener::bind(addr).await?;

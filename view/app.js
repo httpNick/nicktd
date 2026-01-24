@@ -52,7 +52,6 @@ function showGameView() {
     authView.style.display = 'none';
     lobbySelectionView.style.display = 'none';
     gameView.style.display = 'flex';
-    initGameView();
 }
 
 // --- AUTHENTICATION LOGIC ---
@@ -67,7 +66,7 @@ registerForm.addEventListener('submit', async (e) => {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ username, password }),
         });
-        
+
         if (response.ok) {
             const data = await response.json();
             authStatus.innerHTML = `<p class="green-text">Registration successful for ${data.username}! Please log in.</p>`;
@@ -119,11 +118,11 @@ function connectAndShowLobby() {
 
     socket = new WebSocket(`ws://127.0.0.1:9001/ws?token=${token}`);
 
-    socket.onopen = function() {
+    socket.onopen = function () {
         showLobbyView();
     };
 
-    socket.onmessage = function(event) {
+    socket.onmessage = function (event) {
         const serverMsg = JSON.parse(event.data);
         switch (serverMsg.type) {
             case 'LobbyStatus':
@@ -139,21 +138,21 @@ function connectAndShowLobby() {
                 break;
             case 'Error':
                 isInGame = false;
-                M.toast({html: serverMsg.data});
+                M.toast({ html: serverMsg.data });
                 break;
         }
     };
 
-    socket.onclose = function() {
+    socket.onclose = function () {
         isInGame = false;
-        M.toast({html: 'Disconnected from server.'});
+        M.toast({ html: 'Disconnected from server.' });
         localStorage.removeItem('jwt');
         showAuthView();
     };
 
-    socket.onerror = function() {
+    socket.onerror = function () {
         isInGame = false;
-        M.toast({html: 'WebSocket error.'});
+        M.toast({ html: 'WebSocket error.' });
         localStorage.removeItem('jwt');
         showAuthView();
     };
@@ -174,12 +173,12 @@ function renderLobbies(lobbies) {
     });
     document.querySelectorAll('.join-lobby-btn').forEach(button => {
         if (!button.hasAttribute('disabled')) {
-            button.addEventListener('click', (e) => {
+            button.onclick = (e) => {
                 e.preventDefault();
                 isInGame = true;
                 const lobbyId = parseInt(e.target.getAttribute('data-lobby-id'));
                 socket.send(JSON.stringify({ action: 'joinLobby', payload: lobbyId }));
-            });
+            };
         }
     });
 }
@@ -215,8 +214,8 @@ function drawWorkerArea() {
         // Player Label
         ctx.fillStyle = '#FFF';
         ctx.font = '16px Arial';
-        ctx.fillText(player.username || `Player ${index+1}`, 610, labelY);
-        
+        ctx.fillText(player.username || `Player ${index + 1}`, 610, labelY);
+
         // Gold Amount
         ctx.fillText(`Gold: ${player.gold}`, 720, labelY);
 
@@ -244,7 +243,7 @@ function drawUnits(units) {
         } else {
             ctx.fillStyle = owner_id === myPlayerId ? '#88F' : '#F88'; // Blue for own, Red for other player
         }
-        
+
         if (shape === 'Square') {
             ctx.fillRect(x - (SQUARE_SIZE / 2 - 10), y - (SQUARE_SIZE / 2 - 10), SQUARE_SIZE - 20, SQUARE_SIZE - 20);
         } else if (shape === 'Circle') {
@@ -283,55 +282,56 @@ function hideUiPanel() {
     uiPanel.style.display = 'none';
 }
 
-function initGameView() {
-    document.getElementById('selectSquare').onclick = () => { selectedShape = 'Square'; };
-    document.getElementById('selectCircle').onclick = () => { selectedShape = 'Circle'; };
-    document.getElementById('selectTriangle').onclick = () => { selectedShape = 'Triangle'; };
-    hireWorkerBtn.onclick = () => {
-        if (socket && socket.readyState === WebSocket.OPEN) {
-            socket.send(JSON.stringify({ action: 'hireWorker', payload: {} }));
-        }
-    };
-    document.getElementById('skip-to-combat').onclick = () => {
+// --- ONE-TIME EVENT REGISTRATION ---
+document.getElementById('selectSquare').onclick = () => { selectedShape = 'Square'; };
+document.getElementById('selectCircle').onclick = () => { selectedShape = 'Circle'; };
+document.getElementById('selectTriangle').onclick = () => { selectedShape = 'Triangle'; };
+hireWorkerBtn.onclick = () => {
+    if (socket && socket.readyState === WebSocket.OPEN) {
+        socket.send(JSON.stringify({ action: 'hireWorker', payload: {} }));
+    }
+};
+document.getElementById('skip-to-combat').onclick = () => {
+    if (socket && socket.readyState === WebSocket.OPEN) {
         socket.send(JSON.stringify({ action: 'skipToCombat' }));
-    };
+    }
+};
 
-    canvas.addEventListener('click', function(event) {
-        const rect = canvas.getBoundingClientRect();
-        const clickX = event.clientX - rect.left;
-        const clickY = event.clientY - rect.top;
-        
-        // Ignore clicks in worker area for placement
-        if (clickX > 600) return;
+canvas.addEventListener('click', function (event) {
+    if (!isInGame) return;
+    const rect = canvas.getBoundingClientRect();
+    const clickX = event.clientX - rect.left;
+    const clickY = event.clientY - rect.top;
 
-        const towerSize = SQUARE_SIZE - 20;
-        const clickedTower = gameState.find(s => {
-            return !s.is_enemy && clickX >= s.x - towerSize / 2 && clickX <= s.x + towerSize / 2 &&
-                   clickY >= s.y - towerSize / 2 && clickY <= s.y + towerSize / 2;
-        });
+    // Ignore clicks in worker area for placement
+    if (clickX > 600) return;
 
-        if (clickedTower) {
-            showUiPanel(clickedTower);
-        } else {
-            hideUiPanel();
-            const row = Math.floor(clickY / SQUARE_SIZE);
-            const col = Math.floor(clickX / SQUARE_SIZE);
-            const placeMessage = { action: 'place', payload: { shape: selectedShape, row, col } };
-            if (socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify(placeMessage));
-        }
+    const towerSize = SQUARE_SIZE - 20;
+    const clickedTower = gameState.find(s => {
+        return !s.is_enemy && clickX >= s.x - towerSize / 2 && clickX <= s.x + towerSize / 2 &&
+            clickY >= s.y - towerSize / 2 && clickY <= s.y + towerSize / 2;
     });
 
+    if (clickedTower) {
+        showUiPanel(clickedTower);
+    } else {
+        hideUiPanel();
+        const row = Math.floor(clickY / SQUARE_SIZE);
+        const col = Math.floor(clickX / SQUARE_SIZE);
+        const placeMessage = { action: 'place', payload: { shape: selectedShape, row, col } };
+        if (socket && socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify(placeMessage));
+    }
+});
 
-    sellButton.addEventListener('click', function() {
-        if (selectedTower && selectedTower.owner_id === myPlayerId) {
-            const row = Math.floor(selectedTower.y / SQUARE_SIZE);
-            const col = Math.floor(selectedTower.x / SQUARE_SIZE);
-            const sellMessage = { action: 'sell', payload: { row, col } };
-            if (socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify(sellMessage));
-            hideUiPanel();
-        }
-    });
-}
+sellButton.addEventListener('click', function () {
+    if (selectedTower && selectedTower.owner_id === myPlayerId) {
+        const row = Math.floor(selectedTower.y / SQUARE_SIZE);
+        const col = Math.floor(selectedTower.x / SQUARE_SIZE);
+        const sellMessage = { action: 'sell', payload: { row, col } };
+        if (socket && socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify(sellMessage));
+        hideUiPanel();
+    }
+});
 
 leaveLobbyButton.onclick = () => {
     isInGame = false;
