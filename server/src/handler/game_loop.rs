@@ -5,7 +5,7 @@ use crate::{
     },
     state::ServerState,
     handler::{
-        combat::{update_targeting, update_combat_movement, process_combat, cleanup_dead_entities},
+        combat::{update_targeting, update_combat_movement, process_combat, cleanup_dead_entities, update_mana},
         worker::update_workers,
     },
 };
@@ -39,6 +39,7 @@ pub async fn run_game_loop(server_state: ServerState, lobby_id: usize) {
                 crate::model::game_state::GamePhase::Combat => {
                     update_targeting(&mut lobby.game_state.world);
                     update_combat_movement(&mut lobby.game_state.world, tick_delta);
+                    update_mana(&mut lobby.game_state.world, tick_delta);
                     process_combat(&mut lobby.game_state.world, tick_delta);
                     cleanup_dead_entities(&mut lobby.game_state.world);
                     update_workers(lobby, tick_delta);

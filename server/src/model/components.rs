@@ -54,10 +54,47 @@ pub struct Health {
     pub max: f32,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum DamageType {
+    PhysicalPierce,
+    PhysicalBasic,
+    FireMagical,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Resistances {
+    pub fire: f32,
+    pub ice: f32,
+    pub lightning: f32,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum DefenseSpecialty {
+    None,
+    Armored,
+    MagicResistant,
+    RangeResistant,
+}
+
 #[derive(Component, Clone, Copy, Debug, PartialEq)]
 pub struct AttackStats {
     pub damage: f32,
     pub rate: f32,
+    pub damage_type: DamageType,
+}
+
+#[derive(Component, Clone, Copy, Debug, PartialEq)]
+pub struct DefenseStats {
+    pub armor: f32,
+    pub resistances: Resistances,
+    pub specialty: DefenseSpecialty,
+}
+
+#[derive(Component, Clone, Copy, Debug, PartialEq)]
+pub struct Mana {
+    pub current: f32,
+    pub max: f32,
+    pub regen: f32,
 }
 
 #[derive(Component, Clone, Copy, Debug, PartialEq)]
@@ -95,6 +132,7 @@ mod tests {
         let stats = AttackStats {
             damage: 10.0,
             rate: 1.5,
+            damage_type: DamageType::PhysicalBasic,
         };
         assert_eq!(stats.damage, 10.0);
         assert_eq!(stats.rate, 1.5);
@@ -104,5 +142,50 @@ mod tests {
     fn attack_timer_component_works() {
         let timer = AttackTimer(0.5);
         assert_eq!(timer.0, 0.5);
+    }
+
+    #[test]
+    fn damage_and_defense_types_exist() {
+        let _ = DamageType::PhysicalPierce;
+        let _ = DamageType::PhysicalBasic;
+        let _ = DamageType::FireMagical;
+
+        let _ = DefenseSpecialty::None;
+        let _ = DefenseSpecialty::Armored;
+        let _ = Resistances { fire: 0.0, ice: 0.0, lightning: 0.0 };
+    }
+
+    #[test]
+    fn attack_stats_includes_damage_type() {
+        let stats = AttackStats {
+            damage: 10.0,
+            rate: 1.5,
+            damage_type: DamageType::PhysicalBasic,
+        };
+        assert_eq!(stats.damage_type, DamageType::PhysicalBasic);
+    }
+
+    #[test]
+    fn defense_stats_component_works() {
+        let stats = DefenseStats {
+            armor: 5.0,
+            resistances: Resistances { fire: 10.0, ice: 0.0, lightning: 0.0 },
+            specialty: DefenseSpecialty::Armored,
+        };
+        assert_eq!(stats.armor, 5.0);
+        assert_eq!(stats.resistances.fire, 10.0);
+        assert_eq!(stats.specialty, DefenseSpecialty::Armored);
+    }
+
+    #[test]
+    fn mana_component_works() {
+        let mana = Mana {
+            current: 50.0,
+            max: 100.0,
+            regen: 1.0,
+        };
+        assert_eq!(mana.current, 50.0);
+        assert_eq!(mana.max, 100.0);
+        assert_eq!(mana.regen, 1.0);
     }
 }

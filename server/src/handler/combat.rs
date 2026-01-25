@@ -1,5 +1,5 @@
 use crate::model::components::{
-    AttackRange, AttackStats, AttackTimer, CollisionRadius, Enemy, Health, InAttackRange, Position,
+    AttackRange, AttackStats, AttackTimer, CollisionRadius, DamageType, Enemy, Health, InAttackRange, Mana, Position,
     Target, Worker,
 };
 use bevy_ecs::prelude::{Entity, With, Without, World};
@@ -237,6 +237,13 @@ pub fn cleanup_dead_entities(world: &mut World) {
 
     for entity in dead_entities {
         world.despawn(entity);
+    }
+}
+
+pub fn update_mana(world: &mut World, tick_delta: f32) {
+    let mut query = world.query::<(Entity, &mut Mana)>();
+    for (_entity, mut mana) in query.iter_mut(world) {
+        mana.current = (mana.current + mana.regen * tick_delta).min(mana.max);
     }
 }
 
@@ -522,6 +529,7 @@ mod tests {
                 AttackStats {
                     damage: 10.0,
                     rate: 1.0,
+                    damage_type: DamageType::PhysicalBasic,
                 }, // 1 attack per second
                 AttackTimer(0.0), // Ready to attack
             ))
@@ -608,6 +616,35 @@ mod tests {
             !world.entities().contains(overkill),
             "Overkill entity should be removed"
         );
+    }
+
+    #[test]
+    fn mana_regeneration_works() {
+        use crate::model::components::Mana;
+        let mut world = World::new();
+
+        let unit = world.spawn(Mana {
+            current: 10.0,
+            max: 100.0,
+            regen: 5.0, // 5 mana per second
+        }).id();
+
+        let tick_delta = 0.5; // Half a second
+        update_mana(&mut world, tick_delta);
+
+        let mana = world.entity(unit).get::<Mana>().unwrap();
+        assert_eq!(mana.current, 12.5, "Should regenerate 2.5 mana in 0.5s");
+
+        // Test capping at max
+        let unit_max = world.spawn(Mana {
+            current: 99.0,
+            max: 100.0,
+            regen: 5.0,
+        }).id();
+
+        update_mana(&mut world, tick_delta);
+        let mana_max = world.entity(unit_max).get::<Mana>().unwrap();
+        assert_eq!(mana_max.current, 100.0, "Should cap at max mana");
     }
 
     #[test]

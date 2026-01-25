@@ -1,5 +1,5 @@
 use bevy_ecs::prelude::{World, Entity};
-use crate::model::components::{Position, ShapeComponent, Enemy, Worker, CollisionRadius, AttackRange, PlayerIdComponent, WorkerState, TargetPositions, Health, AttackStats, AttackTimer};
+use crate::model::components::{Position, ShapeComponent, Enemy, Worker, CollisionRadius, AttackRange, PlayerIdComponent, WorkerState, TargetPositions, Health, AttackStats, AttackTimer, DamageType, DefenseStats, DefenseSpecialty, Resistances};
 use crate::model::shape::Shape;
 use crate::handler::combat::{DEFAULT_COLLISION_RADIUS, DEFAULT_ATTACK_RANGE};
 
@@ -21,7 +21,12 @@ pub fn spawn_enemy(world: &mut World, pos: Position, shape: Shape) -> Entity {
         CollisionRadius(radius),
         AttackRange(DEFAULT_ATTACK_RANGE),
         Health { current: DEFAULT_HEALTH, max: DEFAULT_HEALTH },
-        AttackStats { damage: DEFAULT_DAMAGE, rate: DEFAULT_ATTACK_RATE },
+        AttackStats { damage: DEFAULT_DAMAGE, rate: DEFAULT_ATTACK_RATE, damage_type: DamageType::PhysicalBasic },
+        DefenseStats { 
+            armor: 0.0, 
+            resistances: Resistances { fire: 0.0, ice: 0.0, lightning: 0.0 },
+            specialty: DefenseSpecialty::None 
+        },
         AttackTimer(0.0),
     )).id()
 }
@@ -40,7 +45,12 @@ pub fn spawn_unit(world: &mut World, pos: Position, shape: Shape, player_id: i64
         CollisionRadius(radius),
         AttackRange(DEFAULT_ATTACK_RANGE),
         Health { current: DEFAULT_HEALTH, max: DEFAULT_HEALTH },
-        AttackStats { damage: DEFAULT_DAMAGE, rate: DEFAULT_ATTACK_RATE },
+        AttackStats { damage: DEFAULT_DAMAGE, rate: DEFAULT_ATTACK_RATE, damage_type: DamageType::PhysicalBasic },
+        DefenseStats { 
+            armor: 0.0, 
+            resistances: Resistances { fire: 0.0, ice: 0.0, lightning: 0.0 },
+            specialty: DefenseSpecialty::None 
+        },
         AttackTimer(0.0),
     )).id()
 }
@@ -56,6 +66,11 @@ pub fn spawn_worker(world: &mut World, player_id: i64, targets: TargetPositions)
         CollisionRadius(DEFAULT_COLLISION_RADIUS),
         AttackRange(0.0), // Workers don't attack
         Health { current: DEFAULT_HEALTH, max: DEFAULT_HEALTH },
+        DefenseStats { 
+            armor: 0.0, 
+            resistances: Resistances { fire: 0.0, ice: 0.0, lightning: 0.0 },
+            specialty: DefenseSpecialty::None 
+        },
     )).id()
 }
 

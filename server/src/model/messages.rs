@@ -43,6 +43,8 @@ pub struct Unit {
     pub current_hp: f32,
     pub max_hp: f32,
     pub is_worker: bool,
+    pub current_mana: Option<f32>,
+    pub max_mana: Option<f32>,
 }
 
 #[derive(Serialize, Clone, Debug)]
@@ -74,5 +76,25 @@ mod tests {
             ClientMessage::HireWorker {} => assert!(true),
             _ => panic!("Wrong message type"),
         }
+    }
+
+    #[test]
+    fn unit_serialization_includes_mana() {
+        let unit = Unit {
+            shape: Shape::Circle,
+            x: 100.0,
+            y: 100.0,
+            owner_id: 1,
+            is_enemy: false,
+            current_hp: 100.0,
+            max_hp: 100.0,
+            is_worker: false,
+            current_mana: Some(50.0),
+            max_mana: Some(100.0),
+        };
+
+        let json = serde_json::to_string(&unit).unwrap();
+        assert!(json.contains("\"current_mana\":50.0"));
+        assert!(json.contains("\"max_mana\":100.0"));
     }
 }
