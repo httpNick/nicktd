@@ -1,8 +1,4 @@
-use crate::{
-    database,
-    router::router,
-    state::ServerStateData,
-};
+use crate::{database, router::router, state::ServerStateData};
 use hyper::server::conn::http1;
 use hyper::service::service_fn;
 use hyper_util::rt::TokioIo;
