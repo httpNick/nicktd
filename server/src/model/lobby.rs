@@ -1,8 +1,8 @@
+use super::components::{Enemy, Health, PlayerIdComponent, Position, ShapeComponent, Worker};
 use super::game_state::GameState;
+use super::messages::{SerializableGameState, ServerMessage, Unit};
 use super::player::Player;
-use super::messages::{ServerMessage, Unit, SerializableGameState};
 use tokio::sync::broadcast;
-use super::components::{Enemy, PlayerIdComponent, Position, ShapeComponent};
 
 pub struct Lobby {
     pub game_state: GameState,
@@ -25,16 +25,30 @@ impl Lobby {
     }
 
     pub fn broadcast_gamestate(&mut self) {
-        let mut query = self.game_state.world.query::<(&Position, &ShapeComponent, Option<&PlayerIdComponent>, Option<&Enemy>)>();
-        let units: Vec<Unit> = query.iter(&self.game_state.world).map(|(pos, shape, maybe_owner, maybe_enemy)| {
-            Unit {
-                x: pos.x,
-                y: pos.y,
-                shape: shape.0.clone(),
-                owner_id: maybe_owner.map_or(-1, |owner| owner.0),
-                is_enemy: maybe_enemy.is_some(),
-            }
-        }).collect();
+        let mut query = self.game_state.world.query::<(
+            &Position,
+            &ShapeComponent,
+            Option<&PlayerIdComponent>,
+            Option<&Enemy>,
+            Option<&Health>,
+            Option<&Worker>,
+        )>();
+
+        let units: Vec<Unit> = query
+            .iter(&self.game_state.world)
+            .map(
+                |(pos, shape, maybe_owner, maybe_enemy, maybe_health, maybe_worker)| Unit {
+                    x: pos.x,
+                    y: pos.y,
+                    shape: shape.0.clone(),
+                    owner_id: maybe_owner.map_or(-1, |owner| owner.0),
+                    is_enemy: maybe_enemy.is_some(),
+                    current_hp: maybe_health.map_or(100.0, |h| h.current),
+                    max_hp: maybe_health.map_or(100.0, |h| h.max),
+                    is_worker: maybe_worker.is_some(),
+                },
+            )
+            .collect();
 
         let serializable_state = SerializableGameState {
             units,
@@ -64,11 +78,15 @@ mod tests {
     #[test]
     fn broadcast_gamestate_includes_players_and_gold() {
         let mut lobby = Lobby::new();
-        lobby.players.push(Player { id: 1, username: "test".to_string(), gold: 100 });
-        
+        lobby.players.push(Player {
+            id: 1,
+            username: "test".to_string(),
+            gold: 100,
+        });
+
         let mut rx = lobby.tx.subscribe();
         lobby.broadcast_gamestate();
-        
+
         let msg = rx.try_recv().unwrap();
         assert!(msg.contains("\"players\":"));
         assert!(msg.contains("\"gold\":100"));

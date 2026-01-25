@@ -236,6 +236,7 @@ function drawWorkerArea() {
 }
 
 function drawUnits(units) {
+    // Pass 1: Draw all unit shapes
     units.forEach(unit => {
         const { shape, x, y, owner_id, is_enemy } = unit;
         if (is_enemy) {
@@ -250,6 +251,26 @@ function drawUnits(units) {
             ctx.beginPath(); ctx.arc(x, y, SQUARE_SIZE / 2 - 10, 0, 2 * Math.PI); ctx.fill();
         } else if (shape === 'Triangle') {
             ctx.beginPath(); ctx.moveTo(x, y - (SQUARE_SIZE / 2 - 10)); ctx.lineTo(x - (SQUARE_SIZE / 2 - 10), y + (SQUARE_SIZE / 2 - 10)); ctx.lineTo(x + (SQUARE_SIZE / 2 - 10), y + (SQUARE_SIZE / 2 - 10)); ctx.closePath(); ctx.fill();
+        }
+    });
+
+    // Pass 2: Draw all health bars on top of all units
+    units.forEach(unit => {
+        const { x, y, current_hp, max_hp, is_worker } = unit;
+        if (!is_worker && current_hp !== undefined && max_hp !== undefined) {
+            const barWidth = SQUARE_SIZE - 20;
+            const barHeight = 6;
+            const barX = x - barWidth / 2;
+            const barY = y - (SQUARE_SIZE / 2);
+
+            // Background (Red)
+            ctx.fillStyle = '#F00';
+            ctx.fillRect(barX, barY, barWidth, barHeight);
+
+            // Foreground (Green)
+            const healthPercent = Math.max(0, Math.min(1, current_hp / max_hp));
+            ctx.fillStyle = '#0F0';
+            ctx.fillRect(barX, barY, barWidth * healthPercent, barHeight);
         }
     });
 }
