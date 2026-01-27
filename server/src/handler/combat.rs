@@ -82,7 +82,7 @@ pub fn update_targeting(world: &mut World) {
 pub fn update_combat_movement(world: &mut World, tick_delta: f32) {
     // --- MOVEMENT & COLLISION SYSTEM ---
     let physical_entities: Vec<(Entity, Position, f32)> = world
-        .query::<(Entity, &Position, &CollisionRadius)>()
+        .query_filtered::<(Entity, &Position, &CollisionRadius), Without<Worker>>()
         .iter(world)
         .map(|(e, p, r)| (e, *p, r.0))
         .collect();
@@ -91,13 +91,13 @@ pub fn update_combat_movement(world: &mut World, tick_delta: f32) {
     let mut combat_markers = Vec::new(); // (Entity, bool) where true = add, false = remove
 
     // First pass: Calculate all movement vectors
-    let mut query = world.query::<(
+    let mut query = world.query_filtered::<(
         Entity,
         &Position,
         Option<&Target>,
         Option<&AttackRange>,
         &CollisionRadius,
-    )>();
+    ), Without<Worker>>();
     for (entity, pos, target_opt, attack_range_opt, collision_radius) in query.iter(world) {
         let mut velocity_x = 0.0;
         let mut velocity_y = 0.0;
@@ -993,5 +993,45 @@ mod tests {
         assert_eq!(event.attack_type, DamageType::PhysicalPierce);
         assert_eq!(event.start_pos, Position { x: 0.0, y: 0.0 });
         assert_eq!(event.end_pos, Position { x: 10.0, y: 0.0 });
+    }
+
+    #[test]
+    fn combat_movement_ignores_workers() {
+        let mut world = World::new();
+
+        // 1. Worker outside the board (X > 600)
+        let worker_pos = Position { x: 700.0, y: 100.0 };
+        let worker = world.spawn((
+            worker_pos,
+            Worker,
+            CollisionRadius(10.0),
+        )).id();
+
+        // 2. Normal Unit overlapping with the worker
+        let unit_pos = Position { x: 595.0, y: 100.0 };
+        let _unit = world.spawn((
+            unit_pos,
+            CollisionRadius(10.0),
+        )).id();
+
+        update_combat_movement(&mut world, 0.1);
+
+        // Assert Worker position is UNCHANGED (not clamped to 600, not pushed by unit)
+        let final_worker_pos = world.entity(worker).get::<Position>().unwrap();
+        assert_eq!(final_worker_pos.x, 700.0, "Worker should not be clamped to board");
+        assert_eq!(final_worker_pos.y, 100.0, "Worker should not be moved by combat systems");
+
+        // Assert Unit position is NOT pushed by the worker
+        // If the worker was considered, the unit (X=595) would be pushed left by the worker (X=700 is far, wait)
+        // Let's overlap them better: Worker at 595, Unit at 590.
+        
+        let mut world2 = World::new();
+        let _worker2 = world2.spawn((Position { x: 595.0, y: 100.0 }, Worker, CollisionRadius(10.0))).id();
+        let unit2 = world2.spawn((Position { x: 590.0, y: 100.0 }, CollisionRadius(10.0))).id();
+        
+        update_combat_movement(&mut world2, 0.1);
+        
+        let final_unit2_pos = world2.entity(unit2).get::<Position>().unwrap();
+        assert_eq!(final_unit2_pos.x, 590.0, "Unit should not be pushed by overlapping worker");
     }
 }
