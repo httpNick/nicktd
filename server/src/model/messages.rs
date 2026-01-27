@@ -108,4 +108,26 @@ mod tests {
         assert!(json.contains("\"current_mana\":50.0"));
         assert!(json.contains("\"max_mana\":100.0"));
     }
+
+    #[test]
+    fn combat_events_serialization_format() {
+        let event = CombatEvent {
+            attacker_id: 1,
+            target_id: 2,
+            attack_type: DamageType::FireMagical,
+            start_pos: Position { x: 10.0, y: 10.0 },
+            end_pos: Position { x: 20.0, y: 20.0 },
+        };
+        let msg = ServerMessage::CombatEvents(vec![event]);
+        let json = serde_json::to_string(&msg).unwrap();
+
+        // Check for correct message type tag
+        assert!(json.contains("\"type\":\"CombatEvents\""));
+        // Check data content exists
+        assert!(json.contains("\"data\":["));
+        // Check specific fields
+        assert!(json.contains("\"attacker_id\":1"));
+        assert!(json.contains("\"attack_type\":\"FireMagical\""));
+        assert!(json.contains("\"x\":10.0"));
+    }
 }
