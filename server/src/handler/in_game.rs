@@ -1,6 +1,7 @@
 use crate::{
     model::{
         components::{PlayerIdComponent, Position, TargetPositions},
+        constants::SQUARE_SIZE,
         messages::ClientMessage,
     },
     state::{ServerState, UpgradedWebSocket},
@@ -12,8 +13,6 @@ use futures_util::{
 };
 use tokio::sync::mpsc;
 use tokio_tungstenite::tungstenite::Message;
-
-const SQUARE_SIZE: u32 = 60;
 
 pub enum InGameLoopResult {
     PlayerLeft,
@@ -53,10 +52,22 @@ pub async fn in_game_loop(
                                         let player_idx = lobby.players.iter().position(|pl| pl.id == player_id);
                                         
                                         if let Some(idx) = player_idx {
-                                            if lobby.players[idx].try_spend_gold(profile.gold_cost) {
-                                                let x = (p.col * SQUARE_SIZE) as f32 + (SQUARE_SIZE as f32 / 2.0);
-                                                let y = (p.row * SQUARE_SIZE) as f32 + (SQUARE_SIZE as f32 / 2.0);
+                                            let x = (p.col as f32 * SQUARE_SIZE) + (SQUARE_SIZE / 2.0);
+                                            let y = (p.row as f32 * SQUARE_SIZE) + (SQUARE_SIZE / 2.0);
 
+                                            // Validate board boundary based on player index
+                                            let allowed = if idx == 0 {
+                                                x < crate::model::constants::LEFT_BOARD_END
+                                            } else {
+                                                x >= crate::model::constants::RIGHT_BOARD_START && x < crate::model::constants::RIGHT_BOARD_END
+                                            };
+
+                                            if !allowed {
+                                                let _ = crate::routes::ws::send_message(ws_sender, crate::model::messages::ServerMessage::Error("You can only place units on your own board.".into())).await;
+                                                continue;
+                                            }
+
+                                            if lobby.players[idx].try_spend_gold(profile.gold_cost) {
                                                 crate::handler::spawn::spawn_unit(
                                                     &mut lobby.game_state.world,
                                                     Position { x, y },
@@ -72,10 +83,10 @@ pub async fn in_game_loop(
                                     }
                                     ClientMessage::Sell(s) => {
                                         let mut sell_data: Option<(Entity, crate::model::shape::Shape)> = None;
-                                        let x_min = (s.col * SQUARE_SIZE) as f32;
-                                        let x_max = x_min + SQUARE_SIZE as f32;
-                                        let y_min = (s.row * SQUARE_SIZE) as f32;
-                                        let y_max = y_min + SQUARE_SIZE as f32;
+                                        let x_min = s.col as f32 * SQUARE_SIZE;
+                                        let x_max = x_min + SQUARE_SIZE;
+                                        let y_min = s.row as f32 * SQUARE_SIZE;
+                                        let y_max = y_min + SQUARE_SIZE;
 
                                         let mut query = lobby.game_state.world.query::<(Entity, &Position, &PlayerIdComponent, &crate::model::components::ShapeComponent)>();
                                         for (entity, position, owner, shape) in query.iter(&lobby.game_state.world) {
@@ -146,6 +157,49 @@ mod tests {
     use crate::model::components::ShapeComponent;
 
     #[test]
+    fn test_unit_placement_restricted_by_player_id() {
+        use crate::model::constants::{LEFT_BOARD_END, RIGHT_BOARD_START, SQUARE_SIZE};
+        let mut lobby = Lobby::new();
+        
+        let p1_id = 1;
+        let p2_id = 2;
+        lobby.players.push(Player { id: p1_id, username: "p1".into(), gold: 100 });
+        lobby.players.push(Player { id: p2_id, username: "p2".into(), gold: 100 });
+
+        // Player 0 (index 0) is P1. Board is 0-600.
+        // Player 1 (index 1) is P2. Board is 800-1400.
+
+        // P1 tries to place on Right Board (col 15 -> x = 15*60 + 30 = 930)
+        let p1_msg = PlaceMessage { shape: Shape::Square, row: 1, col: 15 };
+        
+        // SIMULATED logic for P1
+        let player_idx = 0; // P1
+        let x = (p1_msg.col as f32 * SQUARE_SIZE) + (SQUARE_SIZE / 2.0);
+        let allowed = if player_idx == 0 { x < LEFT_BOARD_END } else { x >= RIGHT_BOARD_START };
+        
+        assert!(!allowed, "P1 should not be allowed to place on Right Board");
+
+        // P2 tries to place on Left Board (col 5 -> x = 5*60 + 30 = 330)
+        let p2_msg = PlaceMessage { shape: Shape::Square, row: 1, col: 5 };
+        
+        // SIMULATED logic for P2
+        let player_idx = 1; // P2
+        let x = (p2_msg.col as f32 * SQUARE_SIZE) + (SQUARE_SIZE / 2.0);
+        let allowed = if player_idx == 0 { x < LEFT_BOARD_END } else { x >= RIGHT_BOARD_START };
+        
+        assert!(!allowed, "P2 should not be allowed to place on Left Board");
+
+        // Valid placements
+        let p1_valid = PlaceMessage { shape: Shape::Square, row: 1, col: 2 };
+        let x1 = (p1_valid.col as f32 * SQUARE_SIZE) + (SQUARE_SIZE / 2.0);
+        assert!(x1 < LEFT_BOARD_END);
+
+        let p2_valid = PlaceMessage { shape: Shape::Square, row: 1, col: 15 };
+        let x2 = (p2_valid.col as f32 * SQUARE_SIZE) + (SQUARE_SIZE / 2.0);
+        assert!(x2 >= RIGHT_BOARD_START);
+    }
+
+    #[test]
     fn test_unit_placement_deducts_gold() {
         let mut lobby = Lobby::new();
         let player_id = 1;
@@ -158,8 +212,8 @@ mod tests {
         let player = lobby.players.iter_mut().find(|pl| pl.id == player_id).unwrap();
         
         if player.try_spend_gold(profile.gold_cost) {
-             let x = (p.col * SQUARE_SIZE) as f32 + (SQUARE_SIZE as f32 / 2.0);
-             let y = (p.row * SQUARE_SIZE) as f32 + (SQUARE_SIZE as f32 / 2.0);
+             let x = (p.col as f32 * SQUARE_SIZE) + (SQUARE_SIZE / 2.0);
+             let y = (p.row as f32 * SQUARE_SIZE) + (SQUARE_SIZE / 2.0);
              crate::handler::spawn::spawn_unit(&mut lobby.game_state.world, Position { x, y }, p.shape, player_id);
         }
         // --- END SIMULATED logic ---
@@ -182,8 +236,8 @@ mod tests {
         let player_opt = lobby.players.iter_mut().find(|pl| pl.id == player_id);
         if let Some(player) = player_opt {
             if player.try_spend_gold(profile.gold_cost) {
-                 let x = (p.col * SQUARE_SIZE) as f32 + (SQUARE_SIZE as f32 / 2.0);
-                 let y = (p.row * SQUARE_SIZE) as f32 + (SQUARE_SIZE as f32 / 2.0);
+                 let x = (p.col as f32 * SQUARE_SIZE) + (SQUARE_SIZE / 2.0);
+                 let y = (p.row as f32 * SQUARE_SIZE) + (SQUARE_SIZE / 2.0);
                  crate::handler::spawn::spawn_unit(&mut lobby.game_state.world, Position { x, y }, p.shape, player_id);
             }
         }
@@ -201,18 +255,18 @@ mod tests {
         lobby.players.push(Player { id: player_id, username: "p1".into(), gold: 0 });
 
         // Manually spawn a Square (cost 25)
-        let x = SQUARE_SIZE as f32 / 2.0;
-        let y = SQUARE_SIZE as f32 / 2.0;
+        let x = SQUARE_SIZE / 2.0;
+        let y = SQUARE_SIZE / 2.0;
         let _ = crate::handler::spawn::spawn_unit(&mut lobby.game_state.world, Position { x, y }, Shape::Square, player_id);
 
         let s = SellMessage { row: 0, col: 0 };
         
         // --- SIMULATED logic ---
         let mut sell_data = None;
-        let x_min = (s.col * SQUARE_SIZE) as f32;
-        let x_max = x_min + SQUARE_SIZE as f32;
-        let y_min = (s.row * SQUARE_SIZE) as f32;
-        let y_max = y_min + SQUARE_SIZE as f32;
+        let x_min = s.col as f32 * SQUARE_SIZE;
+        let x_max = x_min + SQUARE_SIZE;
+        let y_min = s.row as f32 * SQUARE_SIZE;
+        let y_max = y_min + SQUARE_SIZE;
 
         let mut query = lobby.game_state.world.query::<(Entity, &Position, &PlayerIdComponent, &ShapeComponent)>();
         for (e, position, owner, shape) in query.iter(&lobby.game_state.world) {

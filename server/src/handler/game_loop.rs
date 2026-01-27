@@ -6,7 +6,7 @@ use crate::{
     },
     state::ServerState,
     handler::{
-        combat::{update_targeting, update_combat_movement, process_combat, cleanup_dead_entities, update_mana, update_active_combat_stats},
+        combat::{update_targeting, update_combat_movement, process_combat, cleanup_dead_entities, update_mana, update_active_combat_stats, update_combat_reset},
         worker::update_workers,
     },
 };
@@ -47,12 +47,18 @@ pub async fn run_game_loop(server_state: ServerState, lobby_id: usize) {
                         if lobby.game_state.phase_timer <= 0.0 {
                             lobby.game_state.phase_timer = 0.0;
                             lobby.game_state.phase = crate::model::game_state::GamePhase::Combat;
-                            // Spawn one enemy at the top center
-                            crate::handler::spawn::spawn_enemy(
-                                &mut lobby.game_state.world,
-                                Position { x: 300.0, y: 30.0 },
-                                Shape::Triangle,
-                            );
+                            
+                            use crate::model::constants::{BOARD_SIZE, RIGHT_BOARD_START};
+                            let spawn_x_left = BOARD_SIZE / 2.0;
+                            let spawn_x_right = RIGHT_BOARD_START + (BOARD_SIZE / 2.0);
+
+                            for x in [spawn_x_left, spawn_x_right] {
+                                crate::handler::spawn::spawn_enemy(
+                                    &mut lobby.game_state.world,
+                                    Position { x, y: 30.0 },
+                                    Shape::Triangle,
+                                );
+                            }
                         }
                     }
                 }
@@ -66,6 +72,7 @@ pub async fn run_game_loop(server_state: ServerState, lobby_id: usize) {
                         lobby.broadcast_message(&ServerMessage::CombatEvents(combat_events));
                     }
                     cleanup_dead_entities(&mut lobby.game_state.world);
+                    update_combat_reset(&mut lobby.game_state.world);
                     update_workers(lobby, tick_delta);
                 }
             }
@@ -85,6 +92,44 @@ mod tests {
     use crate::model::components::Worker;
 
     #[test]
+    fn test_enemy_spawning_on_both_boards() {
+        use crate::model::constants::{BOARD_SIZE, RIGHT_BOARD_START};
+        use crate::model::components::Enemy;
+        let mut lobby = Lobby::new();
+        lobby.players.push(Player { id: 1, username: "p1".into(), gold: 100 });
+        lobby.players.push(Player { id: 2, username: "p2".into(), gold: 100 });
+        lobby.game_state.phase_timer = 0.0; // Trigger transition
+
+        // --- SIMULATED TICK START ---
+        if lobby.game_state.phase_timer <= 0.0 {
+            lobby.game_state.phase = crate::model::game_state::GamePhase::Combat;
+            
+            // Spawn one enemy for each board
+            let spawn_x_left = BOARD_SIZE / 2.0;
+            let spawn_x_right = RIGHT_BOARD_START + (BOARD_SIZE / 2.0);
+
+            for x in [spawn_x_left, spawn_x_right] {
+                crate::handler::spawn::spawn_enemy(
+                    &mut lobby.game_state.world,
+                    Position { x, y: 30.0 },
+                    Shape::Triangle,
+                );
+            }
+        }
+        // --- SIMULATED TICK END ---
+
+        let mut query = lobby.game_state.world.query::<(&Enemy, &Position)>();
+        let mut left_enemy = false;
+        let mut right_enemy = false;
+        for (_, pos) in query.iter(&lobby.game_state.world) {
+            if pos.x < BOARD_SIZE { left_enemy = true; }
+            if pos.x >= RIGHT_BOARD_START { right_enemy = true; }
+        }
+        assert!(left_enemy, "Should spawn enemy on left board");
+        assert!(right_enemy, "Should spawn enemy on right board");
+    }
+
+    #[test]
     fn test_starting_workers_spawned_when_lobby_full() {
         let mut lobby = Lobby::new();
         lobby.players.push(Player { id: 1, username: "p1".into(), gold: 100 });
@@ -96,7 +141,7 @@ mod tests {
         // But we can extract the logic or test the side effect if we had a "tick" function.
         // For now, I'll simulate a single tick of the Build phase logic here.
         
-        let tick_delta = 1.0 / TICK_RATE;
+        let _tick_delta = 1.0 / TICK_RATE;
         
         // --- SIMULATED TICK START ---
         if lobby.is_full() {

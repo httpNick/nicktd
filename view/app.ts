@@ -69,6 +69,10 @@ const hireWorkerBtn = document.getElementById('hire-worker-btn') as HTMLButtonEl
 
 const BOARD_SIZE = 10;
 const SQUARE_SIZE = 60;
+const GAP_SIZE = 200;
+const LEFT_BOARD_END = 600;
+const RIGHT_BOARD_START = 800;
+
 let selectedShape: 'Square' | 'Circle' | 'Triangle' = 'Square';
 let gameState: Unit[] = [];
 let currentPlayers: Player[] = [];
@@ -239,47 +243,64 @@ function renderLobbies(lobbies: any[]) {
 }
 
 function drawCheckerboard() {
+    // Left Board
     for (let row = 0; row < BOARD_SIZE; row++) {
         for (let col = 0; col < BOARD_SIZE; col++) {
             ctx.fillStyle = (row + col) % 2 === 0 ? '#EEE' : '#CCC';
             ctx.fillRect(col * SQUARE_SIZE, row * SQUARE_SIZE, SQUARE_SIZE, SQUARE_SIZE);
         }
     }
+    // Right Board
+    for (let row = 0; row < BOARD_SIZE; row++) {
+        for (let col = 0; col < BOARD_SIZE; col++) {
+            ctx.fillStyle = (row + col) % 2 === 0 ? '#EEE' : '#CCC';
+            ctx.fillRect(RIGHT_BOARD_START + col * SQUARE_SIZE, row * SQUARE_SIZE, SQUARE_SIZE, SQUARE_SIZE);
+        }
+    }
 }
 
 function drawWorkerArea() {
-    ctx.beginPath();
-    ctx.moveTo(600, 0);
-    ctx.lineTo(600, 600);
     ctx.strokeStyle = '#FFF';
+    
+    // Board boundaries
+    ctx.beginPath();
+    ctx.moveTo(LEFT_BOARD_END, 0);
+    ctx.lineTo(LEFT_BOARD_END, 600);
     ctx.stroke();
 
     ctx.beginPath();
-    ctx.moveTo(600, 300);
-    ctx.lineTo(800, 300);
+    ctx.moveTo(RIGHT_BOARD_START, 0);
+    ctx.lineTo(RIGHT_BOARD_START, 600);
+    ctx.stroke();
+
+    // Central horizontal separator
+    ctx.beginPath();
+    ctx.moveTo(LEFT_BOARD_END, 300);
+    ctx.lineTo(RIGHT_BOARD_START, 300);
     ctx.stroke();
 
     currentPlayers.forEach((player, index) => {
         const veinY = index === 0 ? 50 : 350;
         const cartY = index === 0 ? 250 : 550;
         const labelY = index === 0 ? 20 : 320;
+        const textX = LEFT_BOARD_END + 10;
 
         ctx.fillStyle = '#FFF';
         ctx.font = '16px Arial';
-        ctx.fillText(player.username || `Player ${index + 1}`, 610, labelY);
-        ctx.fillText(`Gold: ${player.gold}`, 720, labelY);
+        ctx.fillText(player.username || `Player ${index + 1}`, textX, labelY);
+        ctx.fillText(`Gold: ${player.gold}`, textX + 110, labelY);
 
         ctx.fillStyle = '#FFD700';
         ctx.beginPath();
-        ctx.arc(700, veinY, 20, 0, 2 * Math.PI);
+        ctx.arc(LEFT_BOARD_END + (GAP_SIZE / 2), veinY, 20, 0, 2 * Math.PI);
         ctx.fill();
         ctx.fillStyle = '#000';
-        ctx.fillText("Vein", 685, veinY + 5);
+        ctx.fillText("Vein", LEFT_BOARD_END + (GAP_SIZE / 2) - 15, veinY + 5);
 
         ctx.fillStyle = '#8B4513';
-        ctx.fillRect(680, cartY - 20, 40, 40);
+        ctx.fillRect(LEFT_BOARD_END + (GAP_SIZE / 2) - 20, cartY - 20, 40, 40);
         ctx.fillStyle = '#FFF';
-        ctx.fillText("Cart", 685, cartY + 5);
+        ctx.fillText("Cart", LEFT_BOARD_END + (GAP_SIZE / 2) - 15, cartY + 5);
     });
 }
 
@@ -399,7 +420,17 @@ canvas.addEventListener('click', function (event) {
     const clickX = event.clientX - rect.left;
     const clickY = event.clientY - rect.top;
 
-    if (clickX > 600) return;
+    // Identify which board was clicked
+    let boardIdx: number | null = null;
+    let localX = clickX;
+    if (clickX < LEFT_BOARD_END) {
+        boardIdx = 0;
+    } else if (clickX >= RIGHT_BOARD_START && clickX < RIGHT_BOARD_START + LEFT_BOARD_END) {
+        boardIdx = 1;
+        localX = clickX - RIGHT_BOARD_START;
+    }
+
+    if (boardIdx === null) return;
 
     const towerSize = SQUARE_SIZE - 20;
     const clickedTower = gameState.find(s => {

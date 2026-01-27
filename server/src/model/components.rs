@@ -9,6 +9,9 @@ pub struct Position {
     pub y: f32,
 }
 
+#[derive(Component, Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub struct HomePosition(pub Position);
+
 #[derive(Component)]
 pub struct Target(pub Entity);
 

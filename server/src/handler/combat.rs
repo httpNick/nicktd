@@ -1,20 +1,39 @@
 use crate::model::components::{
     AttackRange, AttackStats, AttackTimer, CollisionRadius, CombatProfile, Enemy, Health,
-    InAttackRange, Mana, Position, Target, Worker,
+    HomePosition, InAttackRange, Mana, Position, Target, Worker,
 };
+use crate::model::constants::{LEFT_BOARD_END, RIGHT_BOARD_START, RIGHT_BOARD_END, TOTAL_HEIGHT, TOTAL_WIDTH};
 use crate::model::messages::CombatEvent;
 use bevy_ecs::prelude::{Entity, With, Without, World};
 
 pub const SPEED: f32 = 100.0; // pixels per second
 
+fn get_board(x: f32) -> Option<u8> {
+    if x < LEFT_BOARD_END {
+        Some(0)
+    } else if x >= RIGHT_BOARD_START && x < RIGHT_BOARD_END {
+        Some(1)
+    } else {
+        None
+    }
+}
+
 pub fn update_targeting(world: &mut World) {
     // --- 1. VALIDATE AND REMOVE INVALID TARGETS IMMEDIATELY ---
     let mut to_remove = Vec::new();
     {
-        let mut query = world.query::<(Entity, &Target)>();
-        for (entity, target) in query.iter(world) {
+        let mut query = world.query::<(Entity, &Target, &Position)>();
+        for (entity, target, pos) in query.iter(world) {
             if !world.entities().contains(target.0) {
                 to_remove.push(entity);
+                continue;
+            }
+
+            // Also check if target is on the same board
+            if let Some(target_pos) = world.get::<Position>(target.0) {
+                if get_board(pos.x) != get_board(target_pos.x) {
+                    to_remove.push(entity);
+                }
             }
         }
     }
@@ -34,8 +53,15 @@ pub fn update_targeting(world: &mut World) {
     if !enemy_positions.is_empty() {
         let mut query = world.query_filtered::<(Entity, &Position), (Without<Enemy>, Without<Target>, Without<Worker>)>();
         for (unit_entity, unit_pos) in query.iter(world) {
+            let unit_board = get_board(unit_pos.x);
+            if unit_board.is_none() { continue; }
+
             let mut closest_enemy: Option<(Entity, f32)> = None;
             for (enemy_entity, enemy_pos) in &enemy_positions {
+                if get_board(enemy_pos.x) != unit_board {
+                    continue;
+                }
+
                 let distance_sq =
                     (unit_pos.x - enemy_pos.x).powi(2) + (unit_pos.y - enemy_pos.y).powi(2);
                 if closest_enemy.is_none() || distance_sq < closest_enemy.unwrap().1 {
@@ -59,8 +85,15 @@ pub fn update_targeting(world: &mut World) {
         let mut query =
             world.query_filtered::<(Entity, &Position), (With<Enemy>, Without<Target>)>();
         for (enemy_entity, enemy_pos) in query.iter(world) {
+            let enemy_board = get_board(enemy_pos.x);
+            if enemy_board.is_none() { continue; }
+
             let mut closest_unit: Option<(Entity, f32)> = None;
             for (unit_entity, unit_pos) in &unit_positions {
+                if get_board(unit_pos.x) != enemy_board {
+                    continue;
+                }
+
                 let distance_sq =
                     (enemy_pos.x - unit_pos.x).powi(2) + (enemy_pos.y - unit_pos.y).powi(2);
                 if closest_unit.is_none() || distance_sq < closest_unit.unwrap().1 {
@@ -163,8 +196,8 @@ pub fn update_combat_movement(world: &mut World, tick_delta: f32) {
     // Second pass: Apply movements
     for (entity, dx, dy) in movements {
         if let Some(mut pos) = world.get_mut::<Position>(entity) {
-            pos.x = (pos.x + dx).clamp(0.0, 600.0);
-            pos.y = (pos.y + dy).clamp(0.0, 600.0);
+            pos.x = (pos.x + dx).clamp(0.0, TOTAL_WIDTH);
+            pos.y = (pos.y + dy).clamp(0.0, TOTAL_HEIGHT);
         }
     }
 
@@ -177,6 +210,43 @@ pub fn update_combat_movement(world: &mut World, tick_delta: f32) {
         } else {
             if world.entity(entity).get::<InAttackRange>().is_some() {
                 world.entity_mut(entity).remove::<InAttackRange>();
+            }
+        }
+    }
+}
+
+pub fn update_combat_reset(world: &mut World) {
+    let mut boards_to_reset = Vec::new();
+    
+    for board_idx in 0..=1 {
+        let mut enemy_query = world.query_filtered::<&Position, With<Enemy>>();
+        let has_enemies = enemy_query.iter(world).any(|pos| get_board(pos.x) == Some(board_idx));
+        
+        if !has_enemies {
+            boards_to_reset.push(board_idx);
+        }
+    }
+
+    if boards_to_reset.is_empty() {
+        return;
+    }
+
+    let mut query = world.query::<(Entity, &mut Position, &HomePosition, Option<&mut Health>, Option<&mut Mana>)>();
+    for (_entity, mut pos, home, health_opt, mana_opt) in query.iter_mut(world) {
+        if let Some(board_idx) = get_board(home.0.x) {
+            if boards_to_reset.contains(&board_idx) {
+                // Reset position
+                *pos = home.0;
+                
+                // Restore Health
+                if let Some(mut health) = health_opt {
+                    health.current = health.max;
+                }
+                
+                // Restore Mana
+                if let Some(mut mana) = mana_opt {
+                    mana.current = mana.max;
+                }
             }
         }
     }
@@ -580,12 +650,12 @@ mod tests {
             pos.y
         );
         assert!(
-            pos.x <= 600.0,
+            pos.x <= TOTAL_WIDTH,
             "Entity should not be pushed off the right edge (x={})",
             pos.x
         );
         assert!(
-            pos.y <= 600.0,
+            pos.y <= TOTAL_HEIGHT,
             "Entity should not be pushed off the bottom edge (y={})",
             pos.y
         );
@@ -768,7 +838,75 @@ mod tests {
     }
 
     #[test]
-    fn full_combat_cycle_integration() {
+    fn test_combat_reset() {
+        use crate::model::components::{Health, Mana, HomePosition};
+        use crate::model::constants::RIGHT_BOARD_START;
+        let mut world = World::new();
+
+        // Unit on Left Board (damaged, moved)
+        let home_pos = Position { x: 0.0 + 100.0, y: 300.0 };
+        let unit = world.spawn((
+            Position { x: home_pos.x + 50.0, y: home_pos.y + 50.0 },
+            HomePosition(home_pos),
+            Health { current: 50.0, max: 100.0 },
+            Mana { current: 10.0, max: 50.0, regen: 1.0 },
+        )).id();
+
+        // No enemies on Left Board.
+        // Enemy on Right Board.
+        world.spawn((
+            Position { x: RIGHT_BOARD_START + 100.0, y: 300.0 },
+            Enemy,
+        ));
+
+        // 1. Run reset (to be implemented)
+        update_combat_reset(&mut world);
+
+        // 2. Assert unit on Left Board is reset
+        let pos = world.entity(unit).get::<Position>().unwrap();
+        let health = world.entity(unit).get::<Health>().unwrap();
+        let mana = world.entity(unit).get::<Mana>().unwrap();
+
+        assert_eq!(pos.x, home_pos.x);
+        assert_eq!(pos.y, home_pos.y);
+        assert_eq!(health.current, health.max);
+        assert_eq!(mana.current, mana.max);
+    }
+
+    #[test]
+    fn test_targeting_isolation() {
+        use crate::model::constants::RIGHT_BOARD_START;
+        let mut world = World::new();
+
+        // Unit on Left Board (x=100)
+        let unit = world.spawn((
+            Position { x: 0.0 + 100.0, y: 300.0 },
+            CollisionRadius(10.0),
+        )).id();
+
+        // Enemy on Right Board (x=900)
+        let enemy = world.spawn((
+            Position { x: RIGHT_BOARD_START + 100.0, y: 300.0 },
+            Enemy,
+            CollisionRadius(10.0),
+        )).id();
+
+        // 1. Update targeting
+        update_targeting(&mut world);
+
+        // 2. Assert NO targeting happens between them
+        assert!(
+            world.entity(unit).get::<Target>().is_none(),
+            "Unit on Left Board should NOT target Enemy on Right Board"
+        );
+        assert!(
+            world.entity(enemy).get::<Target>().is_none(),
+            "Enemy on Right Board should NOT target Unit on Left Board"
+        );
+    }
+
+    #[test]
+    fn physical_simulation_cycle() {
         let mut world = World::new();
         let tick_delta = 1.0 / 30.0;
 

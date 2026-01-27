@@ -1,0 +1,8 @@
+pub const BOARD_SIZE: f32 = 600.0;
+pub const GAP_SIZE: f32 = 200.0;
+pub const SQUARE_SIZE: f32 = 60.0;
+pub const LEFT_BOARD_END: f32 = BOARD_SIZE;
+pub const RIGHT_BOARD_START: f32 = BOARD_SIZE + GAP_SIZE;
+pub const RIGHT_BOARD_END: f32 = RIGHT_BOARD_START + BOARD_SIZE;
+pub const TOTAL_WIDTH: f32 = RIGHT_BOARD_END;
+pub const TOTAL_HEIGHT: f32 = BOARD_SIZE;

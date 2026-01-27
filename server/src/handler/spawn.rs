@@ -1,12 +1,13 @@
 use bevy_ecs::prelude::{World, Entity};
-use crate::model::components::{Position, ShapeComponent, Enemy, Worker, CollisionRadius, AttackRange, PlayerIdComponent, WorkerState, TargetPositions, Health, AttackStats, AttackTimer, DefenseStats, DefenseSpecialty, Resistances};
+use crate::model::components::{Position, HomePosition, ShapeComponent, Enemy, Worker, CollisionRadius, AttackRange, PlayerIdComponent, WorkerState, TargetPositions, Health, AttackStats, AttackTimer, DefenseStats, DefenseSpecialty, Resistances};
 use crate::model::shape::Shape;
-use crate::model::unit_config::{get_unit_profile, DEFAULT_HEALTH, DEFAULT_COLLISION_RADIUS, DEFAULT_ATTACK_RANGE};
+use crate::model::unit_config::{get_unit_profile, DEFAULT_HEALTH, DEFAULT_COLLISION_RADIUS};
 
 pub fn spawn_enemy(world: &mut World, pos: Position, shape: Shape) -> Entity {
     let profile = get_unit_profile(shape);
     let mut entity = world.spawn((
         pos,
+        HomePosition(pos),
         ShapeComponent(shape),
         Enemy,
         CollisionRadius(profile.radius),
@@ -37,6 +38,7 @@ pub fn spawn_unit(world: &mut World, pos: Position, shape: Shape, player_id: i64
     let profile = get_unit_profile(shape);
     let mut entity = world.spawn((
         pos,
+        HomePosition(pos),
         ShapeComponent(shape),
         PlayerIdComponent(player_id),
         CollisionRadius(profile.radius),
@@ -101,17 +103,20 @@ mod tests {
 
     #[test]
     fn spawn_initializes_combat_components() {
-        use crate::model::components::{Health, AttackStats, AttackTimer};
+        use crate::model::components::{Health, AttackStats, AttackTimer, HomePosition};
         let mut world = World::new();
         
-        let unit = spawn_unit(&mut world, Position { x: 0.0, y: 0.0 }, Shape::Circle, 1);
-        let enemy = spawn_enemy(&mut world, Position { x: 0.0, y: 0.0 }, Shape::Circle);
+        let unit_pos = Position { x: 10.0, y: 20.0 };
+        let unit = spawn_unit(&mut world, unit_pos, Shape::Circle, 1);
+        let enemy_pos = Position { x: 100.0, y: 200.0 };
+        let enemy = spawn_enemy(&mut world, enemy_pos, Shape::Circle);
 
-        for entity in [unit, enemy] {
+        for (entity, pos) in [(unit, unit_pos), (enemy, enemy_pos)] {
             let e = world.entity(entity);
             assert!(e.get::<Health>().is_some(), "Should have Health");
             assert!(e.get::<AttackStats>().is_some(), "Should have AttackStats");
             assert!(e.get::<AttackTimer>().is_some(), "Should have AttackTimer");
+            assert!(e.get::<HomePosition>().is_some(), "Should have HomePosition");
             
             let health = e.get::<Health>().unwrap();
             assert!(health.current > 0.0);
@@ -120,12 +125,17 @@ mod tests {
             let stats = e.get::<AttackStats>().unwrap();
             assert!(stats.damage > 0.0);
             assert!(stats.rate > 0.0);
+
+            let home = e.get::<HomePosition>().unwrap();
+            assert_eq!(home.0.x, pos.x);
+            assert_eq!(home.0.y, pos.y);
         }
     }
 
     #[test]
     fn spawn_applies_specialized_stats() {
         use crate::model::components::{AttackRange, AttackStats, DamageType, Mana};
+        use crate::model::unit_config::DEFAULT_ATTACK_RANGE;
         let mut world = World::new();
 
         // Triangle: Ranged Physical Pierce
