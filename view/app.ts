@@ -1,37 +1,85 @@
+import { AnimationManager, DamageType, Position } from './animations';
+
+// --- TYPES & INTERFACES ---
+interface Unit {
+    shape: 'Square' | 'Circle' | 'Triangle';
+    x: number;
+    y: number;
+    owner_id: number;
+    is_enemy: boolean;
+    current_hp: number;
+    max_hp: number;
+    is_worker: boolean;
+    current_mana?: number;
+    max_mana?: number;
+}
+
+interface Player {
+    id: number;
+    username: string;
+    gold: number;
+}
+
+interface GameState {
+    units: Unit[];
+    players: Player[];
+    phase: string;
+    phase_timer: number;
+}
+
+interface CombatEvent {
+    attacker_id: number;
+    target_id: number;
+    attack_type: DamageType;
+    start_pos: Position;
+    end_pos: Position;
+}
+
+type ServerMessage =
+    | { type: 'LobbyStatus'; data: any[] }
+    | { type: 'GameState'; data: GameState }
+    | { type: 'CombatEvents'; data: CombatEvent[] }
+    | { type: 'PlayerId'; data: number }
+    | { type: 'Error'; data: string };
+
 // Views
-const authView = document.getElementById('auth-view');
-const lobbySelectionView = document.getElementById('lobby-selection');
-const gameView = document.getElementById('game-view');
+const authView = document.getElementById('auth-view') as HTMLDivElement;
+const lobbySelectionView = document.getElementById('lobby-selection') as HTMLDivElement;
+const gameView = document.getElementById('game-view') as HTMLDivElement;
 
 // Auth elements
-const registerForm = document.getElementById('register-form');
-const loginForm = document.getElementById('login-form');
-const authStatus = document.getElementById('auth-status');
+const registerForm = document.getElementById('register-form') as HTMLFormElement;
+const loginForm = document.getElementById('login-form') as HTMLFormElement;
+const authStatus = document.getElementById('auth-status') as HTMLDivElement;
 
 // Lobby elements
-const lobbyList = document.getElementById('lobby-list');
+const lobbyList = document.getElementById('lobby-list') as HTMLDivElement;
 
 // Game elements
-const canvas = document.getElementById('gameCanvas');
-const ctx = canvas.getContext('2d');
-const leaveLobbyButton = document.getElementById('leave-lobby');
-const uiPanel = document.getElementById('ui-panel');
-const towerTypeEl = document.getElementById('tower-type');
-const sellButton = document.getElementById('sell-button');
-const gamePhaseEl = document.getElementById('game-phase');
-const gameTimerEl = document.getElementById('game-timer');
-const goldDisplay = document.getElementById('gold-display');
-const hireWorkerBtn = document.getElementById('hire-worker-btn');
+const canvas = document.getElementById('gameCanvas') as HTMLCanvasElement;
+const ctx = canvas.getContext('2d')!;
+const leaveLobbyButton = document.getElementById('leave-lobby') as HTMLButtonElement;
+const uiPanel = document.getElementById('ui-panel') as HTMLDivElement;
+const towerTypeEl = document.getElementById('tower-type') as HTMLHeadingElement;
+const sellButton = document.getElementById('sell-button') as HTMLButtonElement;
+const gamePhaseEl = document.getElementById('game-phase') as HTMLSpanElement;
+const gameTimerEl = document.getElementById('game-timer') as HTMLSpanElement;
+const goldDisplay = document.getElementById('gold-display') as HTMLSpanElement;
+const hireWorkerBtn = document.getElementById('hire-worker-btn') as HTMLButtonElement;
 
 const BOARD_SIZE = 10;
-const SQUARE_SIZE = 60; // Hardcoded to match canvas/board ratio
-let selectedShape = 'Square';
-let gameState = [];
-let currentPlayers = [];
-let selectedTower = null;
-let myPlayerId = null;
-let socket = null;
+const SQUARE_SIZE = 60;
+let selectedShape: 'Square' | 'Circle' | 'Triangle' = 'Square';
+let gameState: Unit[] = [];
+let currentPlayers: Player[] = [];
+let selectedTower: Unit | null = null;
+let myPlayerId: number | null = null;
+let socket: WebSocket | null = null;
 let isInGame = false;
+let gamePhase = '';
+let gameTimer = 0;
+
+const animationManager = new AnimationManager();
 
 const API_BASE_URL = 'http://127.0.0.1:9001';
 
@@ -57,8 +105,8 @@ function showGameView() {
 // --- AUTHENTICATION LOGIC ---
 registerForm.addEventListener('submit', async (e) => {
     e.preventDefault();
-    const username = document.getElementById('register-username').value;
-    const password = document.getElementById('register-password').value;
+    const username = (document.getElementById('register-username') as HTMLInputElement).value;
+    const password = (document.getElementById('register-password') as HTMLInputElement).value;
 
     try {
         const response = await fetch(`${API_BASE_URL}/api/auth/register`, {
@@ -82,8 +130,8 @@ registerForm.addEventListener('submit', async (e) => {
 
 loginForm.addEventListener('submit', async (e) => {
     e.preventDefault();
-    const username = document.getElementById('login-username').value;
-    const password = document.getElementById('login-password').value;
+    const username = (document.getElementById('login-username') as HTMLInputElement).value;
+    const password = (document.getElementById('login-password') as HTMLInputElement).value;
 
     try {
         const response = await fetch(`${API_BASE_URL}/api/auth/login`, {
@@ -123,7 +171,7 @@ function connectAndShowLobby() {
     };
 
     socket.onmessage = function (event) {
-        const serverMsg = JSON.parse(event.data);
+        const serverMsg: ServerMessage = JSON.parse(event.data);
         switch (serverMsg.type) {
             case 'LobbyStatus':
                 renderLobbies(serverMsg.data);
@@ -133,11 +181,16 @@ function connectAndShowLobby() {
                 if (gameView.style.display === 'none') showGameView();
                 updateGameState(serverMsg.data);
                 break;
+            case 'CombatEvents':
+                if (!isInGame) return;
+                handleCombatEvents(serverMsg.data);
+                break;
             case 'PlayerId':
                 myPlayerId = serverMsg.data;
                 break;
             case 'Error':
                 isInGame = false;
+                // @ts-ignore
                 M.toast({ html: serverMsg.data });
                 break;
         }
@@ -145,6 +198,7 @@ function connectAndShowLobby() {
 
     socket.onclose = function () {
         isInGame = false;
+        // @ts-ignore
         M.toast({ html: 'Disconnected from server.' });
         localStorage.removeItem('jwt');
         showAuthView();
@@ -152,6 +206,7 @@ function connectAndShowLobby() {
 
     socket.onerror = function () {
         isInGame = false;
+        // @ts-ignore
         M.toast({ html: 'WebSocket error.' });
         localStorage.removeItem('jwt');
         showAuthView();
@@ -159,7 +214,7 @@ function connectAndShowLobby() {
 }
 
 
-function renderLobbies(lobbies) {
+function renderLobbies(lobbies: any[]) {
     lobbyList.innerHTML = '';
     lobbies.forEach(lobby => {
         const lobbyEl = document.createElement('div');
@@ -172,12 +227,13 @@ function renderLobbies(lobbies) {
         lobbyList.appendChild(lobbyEl);
     });
     document.querySelectorAll('.join-lobby-btn').forEach(button => {
-        if (!button.hasAttribute('disabled')) {
-            button.onclick = (e) => {
+        const btn = button as HTMLAnchorElement;
+        if (!btn.hasAttribute('disabled')) {
+            btn.onclick = (e) => {
                 e.preventDefault();
                 isInGame = true;
-                const lobbyId = parseInt(e.target.getAttribute('data-lobby-id'));
-                socket.send(JSON.stringify({ action: 'joinLobby', payload: lobbyId }));
+                const lobbyId = parseInt(btn.getAttribute('data-lobby-id')!);
+                socket?.send(JSON.stringify({ action: 'joinLobby', payload: lobbyId }));
             };
         }
     });
@@ -193,17 +249,15 @@ function drawCheckerboard() {
 }
 
 function drawWorkerArea() {
-    // Divider
     ctx.beginPath();
     ctx.moveTo(600, 0);
     ctx.lineTo(600, 600);
     ctx.strokeStyle = '#FFF';
     ctx.stroke();
 
-    // Horizontal Divider
     ctx.beginPath();
     ctx.moveTo(600, 300);
-    ctx.lineTo(800, 300); // Assuming canvas width allows
+    ctx.lineTo(800, 300);
     ctx.stroke();
 
     currentPlayers.forEach((player, index) => {
@@ -211,38 +265,32 @@ function drawWorkerArea() {
         const cartY = index === 0 ? 250 : 550;
         const labelY = index === 0 ? 20 : 320;
 
-        // Player Label
         ctx.fillStyle = '#FFF';
         ctx.font = '16px Arial';
         ctx.fillText(player.username || `Player ${index + 1}`, 610, labelY);
-
-        // Gold Amount
         ctx.fillText(`Gold: ${player.gold}`, 720, labelY);
 
-        // Gold Vein
-        ctx.fillStyle = '#FFD700'; // Gold
+        ctx.fillStyle = '#FFD700';
         ctx.beginPath();
         ctx.arc(700, veinY, 20, 0, 2 * Math.PI);
         ctx.fill();
         ctx.fillStyle = '#000';
         ctx.fillText("Vein", 685, veinY + 5);
 
-        // Gold Cart
-        ctx.fillStyle = '#8B4513'; // SaddleBrown
+        ctx.fillStyle = '#8B4513';
         ctx.fillRect(680, cartY - 20, 40, 40);
         ctx.fillStyle = '#FFF';
         ctx.fillText("Cart", 685, cartY + 5);
     });
 }
 
-function drawUnits(units) {
-    // Pass 1: Draw all unit shapes
+function drawUnits(units: Unit[]) {
     units.forEach(unit => {
         const { shape, x, y, owner_id, is_enemy } = unit;
         if (is_enemy) {
-            ctx.fillStyle = '#2E8B57'; // SeaGreen for enemies
+            ctx.fillStyle = '#2E8B57';
         } else {
-            ctx.fillStyle = owner_id === myPlayerId ? '#88F' : '#F88'; // Blue for own, Red for other player
+            ctx.fillStyle = owner_id === myPlayerId ? '#88F' : '#F88';
         }
 
         if (shape === 'Square') {
@@ -254,7 +302,6 @@ function drawUnits(units) {
         }
     });
 
-    // Pass 2: Draw all health bars on top of all units
     units.forEach(unit => {
         const { x, y, current_hp, max_hp, is_worker } = unit;
         if (!is_worker && current_hp !== undefined && max_hp !== undefined) {
@@ -263,11 +310,9 @@ function drawUnits(units) {
             const barX = x - barWidth / 2;
             const barY = y - (SQUARE_SIZE / 2);
 
-            // Background (Red)
             ctx.fillStyle = '#F00';
             ctx.fillRect(barX, barY, barWidth, barHeight);
 
-            // Foreground (Green)
             const healthPercent = Math.max(0, Math.min(1, current_hp / max_hp));
             ctx.fillStyle = '#0F0';
             ctx.fillRect(barX, barY, barWidth * healthPercent, barHeight);
@@ -275,22 +320,53 @@ function drawUnits(units) {
     });
 }
 
-function updateGameState(newState) {
+function updateGameState(newState: GameState) {
     gameState = newState.units;
     if (newState.players) {
         currentPlayers = newState.players;
         const me = newState.players.find(p => p.id === myPlayerId);
-        if (me) goldDisplay.textContent = me.gold;
+        if (me) goldDisplay.textContent = me.gold.toString();
     }
-    gamePhaseEl.textContent = newState.phase;
-    gameTimerEl.textContent = newState.phase_timer.toFixed(1);
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
-    drawCheckerboard();
-    drawWorkerArea();
-    drawUnits(gameState);
+    gamePhase = newState.phase;
+    gameTimer = newState.phase_timer;
+    
+    gamePhaseEl.textContent = gamePhase;
+    gameTimerEl.textContent = gameTimer.toFixed(1);
 }
 
-function showUiPanel(tower) {
+function handleCombatEvents(events: CombatEvent[]) {
+    events.forEach(event => {
+        const isRanged = event.attack_type === 'FireMagical' || event.attack_type === 'PhysicalPierce';
+        const type = isRanged ? 'projectile' : 'melee';
+        const duration = isRanged ? 300 : 200;
+
+        animationManager.addAnimation(
+            type,
+            event.start_pos,
+            event.end_pos,
+            duration,
+            event.attack_type
+        );
+    });
+}
+
+function render() {
+    if (isInGame) {
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        drawCheckerboard();
+        drawWorkerArea();
+        drawUnits(gameState);
+        
+        const now = Date.now();
+        animationManager.update(now);
+        animationManager.draw(ctx, now);
+    }
+    requestAnimationFrame(render);
+}
+
+requestAnimationFrame(render);
+
+function showUiPanel(tower: Unit) {
     if (tower.is_enemy) return;
     selectedTower = tower;
     towerTypeEl.textContent = tower.shape;
@@ -304,15 +380,15 @@ function hideUiPanel() {
 }
 
 // --- ONE-TIME EVENT REGISTRATION ---
-document.getElementById('selectSquare').onclick = () => { selectedShape = 'Square'; };
-document.getElementById('selectCircle').onclick = () => { selectedShape = 'Circle'; };
-document.getElementById('selectTriangle').onclick = () => { selectedShape = 'Triangle'; };
+document.getElementById('selectSquare')!.onclick = () => { selectedShape = 'Square'; };
+document.getElementById('selectCircle')!.onclick = () => { selectedShape = 'Circle'; };
+document.getElementById('selectTriangle')!.onclick = () => { selectedShape = 'Triangle'; };
 hireWorkerBtn.onclick = () => {
     if (socket && socket.readyState === WebSocket.OPEN) {
         socket.send(JSON.stringify({ action: 'hireWorker', payload: {} }));
     }
 };
-document.getElementById('skip-to-combat').onclick = () => {
+document.getElementById('skip-to-combat')!.onclick = () => {
     if (socket && socket.readyState === WebSocket.OPEN) {
         socket.send(JSON.stringify({ action: 'skipToCombat' }));
     }
@@ -324,7 +400,6 @@ canvas.addEventListener('click', function (event) {
     const clickX = event.clientX - rect.left;
     const clickY = event.clientY - rect.top;
 
-    // Ignore clicks in worker area for placement
     if (clickX > 600) return;
 
     const towerSize = SQUARE_SIZE - 20;
@@ -356,11 +431,9 @@ sellButton.addEventListener('click', function () {
 
 leaveLobbyButton.onclick = () => {
     isInGame = false;
-    socket.send(JSON.stringify({ action: 'leaveLobby' }));
+    socket?.send(JSON.stringify({ action: 'leaveLobby' }));
     hideUiPanel();
     showLobbyView();
 };
 
-// --- INITIALIZATION ---
-// On page load, show the authentication view.
 showAuthView();

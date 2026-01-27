@@ -27,3 +27,7 @@ target
 GEMINI.md
 .gemini/
 .kiro/
+
+# Node.js
+node_modules/
+view/dist/

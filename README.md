@@ -94,4 +94,40 @@ You can verify that Docker is correctly integrated with your WSL environment by 
 -   `docker-compose --version`
 -   `docker ps`
 
-If these commands execute without errors, your environment is set up correctly.
+## Frontend Development
+
+The frontend is a TypeScript application located in the `view/` directory. It uses [Vite](https://vitejs.dev/) for development and building.
+
+### Prerequisites
+
+- **Node.js:** Ensure you have Node.js installed (v18+ recommended).
+
+### Setup
+
+1. **Navigate to the view directory:**
+
+   ```bash
+   cd view
+   ```
+
+2. **Install dependencies:**
+
+   ```bash
+   npm install
+   ```
+
+### Running the Frontend
+
+To start the development server with hot-module replacement (HMR):
+
+```bash
+cd view
+npm run dev
+```
+
+By default, the application will be available at `http://localhost:5173`. It expects the backend server to be running at `http://localhost:9001`.
+
+### Testing & Quality
+- **Type Checking:** Run `npm run type-check` to validate TypeScript types without building.
+- **Production Build:** Run `npm run build` to generate a production-ready bundle in `view/dist/`.
+- **Unit Tests:** Run `npm test` to execute frontend logic tests.
