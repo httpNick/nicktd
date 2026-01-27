@@ -27,10 +27,7 @@ pub async fn handle_ws_upgrade(
         Err(e) => {
             return Response::builder()
                 .status(StatusCode::UNAUTHORIZED)
-                .body(Full::new(Bytes::from(format!(
-                    "Unauthorized: {}",
-                    e
-                ))))
+                .body(Full::new(Bytes::from(format!("Unauthorized: {}", e))))
                 .unwrap();
         }
     };
@@ -59,7 +56,13 @@ pub async fn handle_ws_upgrade(
     tokio::spawn(async move {
         match websocket.await {
             Ok(ws_stream) => {
-                handle_connection(ws_stream, state, authenticated_account.id, authenticated_account.username).await;
+                handle_connection(
+                    ws_stream,
+                    state,
+                    authenticated_account.id,
+                    authenticated_account.username,
+                )
+                .await;
             }
             Err(e) => {
                 error!("WebSocket upgrade error after handshake: {}", e);
@@ -77,7 +80,11 @@ async fn authenticate_websocket_request(
     let uri = req.uri();
     let query_params: HashMap<_, _> = uri
         .query()
-        .map(|q| url::form_urlencoded::parse(q.as_bytes()).into_owned().collect())
+        .map(|q| {
+            url::form_urlencoded::parse(q.as_bytes())
+                .into_owned()
+                .collect()
+        })
         .unwrap_or_default();
 
     let token = query_params
@@ -132,7 +139,11 @@ async fn handle_connection(
         .is_err()
     {
         // Cleanup on early failure
-        server_state.active_connections.lock().await.remove(&account_id);
+        server_state
+            .active_connections
+            .lock()
+            .await
+            .remove(&account_id);
         return;
     }
 
@@ -175,8 +186,18 @@ async fn handle_connection(
         {
             handler::pre_game::PreGameLoopResult::Joined(lobby_id) => {
                 if let Some(old_lobby_id) = final_lobby_id {
-                    log::info!("Player {} joining new lobby {}, removing from old lobby {}", account_id, lobby_id, old_lobby_id);
-                    handler::cleanup::remove_player_from_lobby(old_lobby_id, account_id, &server_state).await;
+                    log::info!(
+                        "Player {} joining new lobby {}, removing from old lobby {}",
+                        account_id,
+                        lobby_id,
+                        old_lobby_id
+                    );
+                    handler::cleanup::remove_player_from_lobby(
+                        old_lobby_id,
+                        account_id,
+                        &server_state,
+                    )
+                    .await;
                 }
                 final_lobby_id = Some(lobby_id); // Store lobby_id here
                 let result = handler::in_game::in_game_loop(
@@ -191,23 +212,36 @@ async fn handle_connection(
 
                 match result {
                     handler::in_game::InGameLoopResult::PlayerLeft => {
-                        handler::cleanup::remove_player_from_lobby(lobby_id, account_id, &server_state).await;
+                        handler::cleanup::remove_player_from_lobby(
+                            lobby_id,
+                            account_id,
+                            &server_state,
+                        )
+                        .await;
                         final_lobby_id = None;
                         continue;
-                    },
+                    }
                     handler::in_game::InGameLoopResult::ClientDisconnected => break,
                     handler::in_game::InGameLoopResult::ForceDisconnect => {
                         forced_disconnect = true;
                         // Send error message to client before closing
-                        let _ = send_message(&mut ws_sender, ServerMessage::Error("Logged in from another location".into())).await;
+                        let _ = send_message(
+                            &mut ws_sender,
+                            ServerMessage::Error("Logged in from another location".into()),
+                        )
+                        .await;
                         break;
                     }
                 }
             }
             handler::pre_game::PreGameLoopResult::ForceDisconnect => {
-                 forced_disconnect = true;
-                 let _ = send_message(&mut ws_sender, ServerMessage::Error("Logged in from another location".into())).await;
-                 break;
+                forced_disconnect = true;
+                let _ = send_message(
+                    &mut ws_sender,
+                    ServerMessage::Error("Logged in from another location".into()),
+                )
+                .await;
+                break;
             }
             handler::pre_game::PreGameLoopResult::ClientDisconnected => {
                 break;
@@ -221,7 +255,7 @@ async fn handle_connection(
     } else {
         // Only clear session if this wasn't a forced disconnect (i.e. replaced by new session)
         if !forced_disconnect {
-             if let Err(e) = database::clear_session(&server_state.db_pool, account_id).await {
+            if let Err(e) = database::clear_session(&server_state.db_pool, account_id).await {
                 log::error!("Failed to clear session for player {}: {}", account_id, e);
             }
         }
@@ -231,9 +265,9 @@ async fn handle_connection(
     // (We don't want to remove the NEW connection if we were just killed by it)
     {
         let mut active_conns = server_state.active_connections.lock().await;
-        // Optimization: We can't easily check if the value in the map is *our* sender 
+        // Optimization: We can't easily check if the value in the map is *our* sender
         // without comparing pointers or IDs, but Sender doesn't expose that easily.
-        // However, if we were forced_disconnect, we know the map has already been updated 
+        // However, if we were forced_disconnect, we know the map has already been updated
         // with the NEW sender, so we should NOT remove it.
         if !forced_disconnect {
             active_conns.remove(&account_id);

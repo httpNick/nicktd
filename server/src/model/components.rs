@@ -172,7 +172,11 @@ mod tests {
 
         let _ = DefenseSpecialty::None;
         let _ = DefenseSpecialty::Armored;
-        let _ = Resistances { fire: 0.0, ice: 0.0, lightning: 0.0 };
+        let _ = Resistances {
+            fire: 0.0,
+            ice: 0.0,
+            lightning: 0.0,
+        };
     }
 
     #[test]
@@ -189,7 +193,11 @@ mod tests {
     fn defense_stats_component_works() {
         let stats = DefenseStats {
             armor: 5.0,
-            resistances: Resistances { fire: 10.0, ice: 0.0, lightning: 0.0 },
+            resistances: Resistances {
+                fire: 10.0,
+                ice: 0.0,
+                lightning: 0.0,
+            },
             specialty: DefenseSpecialty::Armored,
         };
         assert_eq!(stats.armor, 5.0);

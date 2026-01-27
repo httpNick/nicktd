@@ -38,17 +38,19 @@ impl Lobby {
         let units: Vec<Unit> = query
             .iter(&self.game_state.world)
             .map(
-                |(pos, shape, maybe_owner, maybe_enemy, maybe_health, maybe_worker, maybe_mana)| Unit {
-                    x: pos.x,
-                    y: pos.y,
-                    shape: shape.0.clone(),
-                    owner_id: maybe_owner.map_or(-1, |owner| owner.0),
-                    is_enemy: maybe_enemy.is_some(),
-                    current_hp: maybe_health.map_or(100.0, |h| h.current),
-                    max_hp: maybe_health.map_or(100.0, |h| h.max),
-                    is_worker: maybe_worker.is_some(),
-                    current_mana: maybe_mana.map(|m| m.current),
-                    max_mana: maybe_mana.map(|m| m.max),
+                |(pos, shape, maybe_owner, maybe_enemy, maybe_health, maybe_worker, maybe_mana)| {
+                    Unit {
+                        x: pos.x,
+                        y: pos.y,
+                        shape: shape.0.clone(),
+                        owner_id: maybe_owner.map_or(-1, |owner| owner.0),
+                        is_enemy: maybe_enemy.is_some(),
+                        current_hp: maybe_health.map_or(100.0, |h| h.current),
+                        max_hp: maybe_health.map_or(100.0, |h| h.max),
+                        is_worker: maybe_worker.is_some(),
+                        current_mana: maybe_mana.map(|m| m.current),
+                        max_mana: maybe_mana.map(|m| m.max),
+                    }
                 },
             )
             .collect();

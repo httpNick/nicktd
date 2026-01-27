@@ -1,10 +1,9 @@
 use crate::model::account::{Account, NewAccount};
-use bcrypt::{hash, verify, DEFAULT_COST};
+use bcrypt::{DEFAULT_COST, hash, verify};
 use chrono::{DateTime, Utc};
-use sqlx::{sqlite::SqlitePoolOptions, SqlitePool};
+use sqlx::{SqlitePool, sqlite::SqlitePoolOptions};
 use std::fs;
 use std::path::Path;
-
 
 pub async fn init_db() -> Result<SqlitePool, sqlx::Error> {
     let data_dir = Path::new("./data");
@@ -20,14 +19,10 @@ pub async fn init_db() -> Result<SqlitePool, sqlx::Error> {
         .connect(db_url)
         .await?;
 
-    sqlx::migrate!("./migrations")
-        .run(&pool)
-        .await?;
+    sqlx::migrate!("./migrations").run(&pool).await?;
 
     Ok(pool)
 }
-
-
 
 pub async fn create_account(
     pool: &SqlitePool,
@@ -85,7 +80,6 @@ pub async fn update_session(
     .await?;
     Ok(())
 }
-
 
 pub async fn clear_session(pool: &SqlitePool, account_id: i64) -> Result<(), sqlx::Error> {
     sqlx::query!(

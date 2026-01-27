@@ -1,5 +1,5 @@
 use chrono::{DateTime, Utc};
-use jsonwebtoken::{decode, encode, DecodingKey, EncodingKey, Header, Validation};
+use jsonwebtoken::{DecodingKey, EncodingKey, Header, Validation, decode, encode};
 use serde::{Deserialize, Serialize};
 
 const SECRET_KEY: &[u8] = b"your_secret_key"; // TODO: Replace with secret.

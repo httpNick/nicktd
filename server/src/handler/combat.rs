@@ -2,7 +2,9 @@ use crate::model::components::{
     AttackRange, AttackStats, AttackTimer, CollisionRadius, CombatProfile, Enemy, Health,
     HomePosition, InAttackRange, Mana, Position, Target, Worker,
 };
-use crate::model::constants::{LEFT_BOARD_END, RIGHT_BOARD_START, RIGHT_BOARD_END, TOTAL_HEIGHT, TOTAL_WIDTH};
+use crate::model::constants::{
+    LEFT_BOARD_END, RIGHT_BOARD_END, RIGHT_BOARD_START, TOTAL_HEIGHT, TOTAL_WIDTH,
+};
 use crate::model::messages::CombatEvent;
 use bevy_ecs::prelude::{Entity, With, Without, World};
 
@@ -54,7 +56,9 @@ pub fn update_targeting(world: &mut World) {
         let mut query = world.query_filtered::<(Entity, &Position), (Without<Enemy>, Without<Target>, Without<Worker>)>();
         for (unit_entity, unit_pos) in query.iter(world) {
             let unit_board = get_board(unit_pos.x);
-            if unit_board.is_none() { continue; }
+            if unit_board.is_none() {
+                continue;
+            }
 
             let mut closest_enemy: Option<(Entity, f32)> = None;
             for (enemy_entity, enemy_pos) in &enemy_positions {
@@ -86,7 +90,9 @@ pub fn update_targeting(world: &mut World) {
             world.query_filtered::<(Entity, &Position), (With<Enemy>, Without<Target>)>();
         for (enemy_entity, enemy_pos) in query.iter(world) {
             let enemy_board = get_board(enemy_pos.x);
-            if enemy_board.is_none() { continue; }
+            if enemy_board.is_none() {
+                continue;
+            }
 
             let mut closest_unit: Option<(Entity, f32)> = None;
             for (unit_entity, unit_pos) in &unit_positions {
@@ -217,11 +223,13 @@ pub fn update_combat_movement(world: &mut World, tick_delta: f32) {
 
 pub fn update_combat_reset(world: &mut World) {
     let mut boards_to_reset = Vec::new();
-    
+
     for board_idx in 0..=1 {
         let mut enemy_query = world.query_filtered::<&Position, With<Enemy>>();
-        let has_enemies = enemy_query.iter(world).any(|pos| get_board(pos.x) == Some(board_idx));
-        
+        let has_enemies = enemy_query
+            .iter(world)
+            .any(|pos| get_board(pos.x) == Some(board_idx));
+
         if !has_enemies {
             boards_to_reset.push(board_idx);
         }
@@ -231,18 +239,24 @@ pub fn update_combat_reset(world: &mut World) {
         return;
     }
 
-    let mut query = world.query::<(Entity, &mut Position, &HomePosition, Option<&mut Health>, Option<&mut Mana>)>();
+    let mut query = world.query::<(
+        Entity,
+        &mut Position,
+        &HomePosition,
+        Option<&mut Health>,
+        Option<&mut Mana>,
+    )>();
     for (_entity, mut pos, home, health_opt, mana_opt) in query.iter_mut(world) {
         if let Some(board_idx) = get_board(home.0.x) {
             if boards_to_reset.contains(&board_idx) {
                 // Reset position
                 *pos = home.0;
-                
+
                 // Restore Health
                 if let Some(mut health) = health_opt {
                     health.current = health.max;
                 }
-                
+
                 // Restore Mana
                 if let Some(mut mana) = mana_opt {
                     mana.current = mana.max;
@@ -255,7 +269,13 @@ pub fn update_combat_reset(world: &mut World) {
 pub fn update_active_combat_stats(world: &mut World) {
     let mut updates = Vec::new(); // (Entity, damage, rate, range, type)
 
-    let mut query = world.query::<(Entity, &CombatProfile, Option<&Mana>, &AttackStats, &AttackRange)>();
+    let mut query = world.query::<(
+        Entity,
+        &CombatProfile,
+        Option<&Mana>,
+        &AttackStats,
+        &AttackRange,
+    )>();
     for (entity, profile, mana_opt, current_stats, current_range) in query.iter(world) {
         let use_primary = if profile.mana_cost > 0.0 {
             if let Some(mana) = mana_opt {
@@ -278,7 +298,13 @@ pub fn update_active_combat_stats(world: &mut World) {
             || selected.damage_type != current_stats.damage_type
             || selected.range != current_range.0
         {
-            updates.push((entity, selected.damage, selected.rate, selected.range, selected.damage_type));
+            updates.push((
+                entity,
+                selected.damage,
+                selected.rate,
+                selected.range,
+                selected.damage_type,
+            ));
         }
     }
 
@@ -308,7 +334,9 @@ pub fn process_combat(world: &mut World, tick_delta: f32) -> Vec<CombatEvent> {
         Option<&CombatProfile>,
         Option<&Mana>,
     )>();
-    for (attacker_entity, stats, timer, target_opt, in_range_opt, profile_opt, mana_opt) in query.iter(world) {
+    for (attacker_entity, stats, timer, target_opt, in_range_opt, profile_opt, mana_opt) in
+        query.iter(world)
+    {
         // Update timer
         let mut new_timer = (timer.0 - tick_delta).max(0.0);
 
@@ -351,8 +379,14 @@ pub fn process_combat(world: &mut World, tick_delta: f32) -> Vec<CombatEvent> {
     // Apply damage and generate events
     for (attacker_entity, target_entity, damage, damage_type) in attacks {
         // Capture positions for event
-        let start_pos = world.get::<Position>(attacker_entity).copied().unwrap_or(Position { x: 0.0, y: 0.0 });
-        let end_pos = world.get::<Position>(target_entity).copied().unwrap_or(Position { x: 0.0, y: 0.0 });
+        let start_pos = world
+            .get::<Position>(attacker_entity)
+            .copied()
+            .unwrap_or(Position { x: 0.0, y: 0.0 });
+        let end_pos = world
+            .get::<Position>(target_entity)
+            .copied()
+            .unwrap_or(Position { x: 0.0, y: 0.0 });
 
         combat_events.push(CombatEvent {
             attacker_id: attacker_entity.index(),
@@ -395,9 +429,9 @@ pub fn update_mana(world: &mut World, tick_delta: f32) {
 mod tests {
     use super::*;
     use crate::handler::worker::{CART_POSITIONS, VEIN_POSITIONS};
-    use crate::model::unit_config::{DEFAULT_ATTACK_RANGE, FIREBALL_MANA_COST, MAGE_MELEE_DAMAGE};
-    use crate::model::components::{TargetPositions, DamageType, AttackProfile};
+    use crate::model::components::{AttackProfile, DamageType, TargetPositions};
     use crate::model::shape::Shape;
+    use crate::model::unit_config::{DEFAULT_ATTACK_RANGE, FIREBALL_MANA_COST, MAGE_MELEE_DAMAGE};
 
     #[test]
     fn targeting_ignores_workers() {
@@ -778,11 +812,13 @@ mod tests {
         use crate::model::components::Mana;
         let mut world = World::new();
 
-        let unit = world.spawn(Mana {
-            current: 10.0,
-            max: 100.0,
-            regen: 5.0, // 5 mana per second
-        }).id();
+        let unit = world
+            .spawn(Mana {
+                current: 10.0,
+                max: 100.0,
+                regen: 5.0, // 5 mana per second
+            })
+            .id();
 
         let tick_delta = 0.5; // Half a second
         update_mana(&mut world, tick_delta);
@@ -791,11 +827,13 @@ mod tests {
         assert_eq!(mana.current, 12.5, "Should regenerate 2.5 mana in 0.5s");
 
         // Test capping at max
-        let unit_max = world.spawn(Mana {
-            current: 99.0,
-            max: 100.0,
-            regen: 5.0,
-        }).id();
+        let unit_max = world
+            .spawn(Mana {
+                current: 99.0,
+                max: 100.0,
+                regen: 5.0,
+            })
+            .id();
 
         update_mana(&mut world, tick_delta);
         let mana_max = world.entity(unit_max).get::<Mana>().unwrap();
@@ -839,23 +877,41 @@ mod tests {
 
     #[test]
     fn test_combat_reset() {
-        use crate::model::components::{Health, Mana, HomePosition};
+        use crate::model::components::{Health, HomePosition, Mana};
         use crate::model::constants::RIGHT_BOARD_START;
         let mut world = World::new();
 
         // Unit on Left Board (damaged, moved)
-        let home_pos = Position { x: 0.0 + 100.0, y: 300.0 };
-        let unit = world.spawn((
-            Position { x: home_pos.x + 50.0, y: home_pos.y + 50.0 },
-            HomePosition(home_pos),
-            Health { current: 50.0, max: 100.0 },
-            Mana { current: 10.0, max: 50.0, regen: 1.0 },
-        )).id();
+        let home_pos = Position {
+            x: 0.0 + 100.0,
+            y: 300.0,
+        };
+        let unit = world
+            .spawn((
+                Position {
+                    x: home_pos.x + 50.0,
+                    y: home_pos.y + 50.0,
+                },
+                HomePosition(home_pos),
+                Health {
+                    current: 50.0,
+                    max: 100.0,
+                },
+                Mana {
+                    current: 10.0,
+                    max: 50.0,
+                    regen: 1.0,
+                },
+            ))
+            .id();
 
         // No enemies on Left Board.
         // Enemy on Right Board.
         world.spawn((
-            Position { x: RIGHT_BOARD_START + 100.0, y: 300.0 },
+            Position {
+                x: RIGHT_BOARD_START + 100.0,
+                y: 300.0,
+            },
             Enemy,
         ));
 
@@ -879,17 +935,27 @@ mod tests {
         let mut world = World::new();
 
         // Unit on Left Board (x=100)
-        let unit = world.spawn((
-            Position { x: 0.0 + 100.0, y: 300.0 },
-            CollisionRadius(10.0),
-        )).id();
+        let unit = world
+            .spawn((
+                Position {
+                    x: 0.0 + 100.0,
+                    y: 300.0,
+                },
+                CollisionRadius(10.0),
+            ))
+            .id();
 
         // Enemy on Right Board (x=900)
-        let enemy = world.spawn((
-            Position { x: RIGHT_BOARD_START + 100.0, y: 300.0 },
-            Enemy,
-            CollisionRadius(10.0),
-        )).id();
+        let enemy = world
+            .spawn((
+                Position {
+                    x: RIGHT_BOARD_START + 100.0,
+                    y: 300.0,
+                },
+                Enemy,
+                CollisionRadius(10.0),
+            ))
+            .id();
 
         // 1. Update targeting
         update_targeting(&mut world);
@@ -960,7 +1026,9 @@ mod tests {
 
     #[test]
     fn mage_switches_to_melee_when_out_of_mana() {
-        use crate::model::components::{Mana, AttackStats, AttackRange, CombatProfile, AttackProfile, DamageType, Health};
+        use crate::model::components::{
+            AttackProfile, AttackRange, AttackStats, CombatProfile, DamageType, Health, Mana,
+        };
         use crate::model::unit_config::{MAGE_MANA_MAX, RANGED_ATTACK_RANGE};
 
         let mut world = World::new();
@@ -972,51 +1040,60 @@ mod tests {
         let melee_range = DEFAULT_ATTACK_RANGE;
 
         // Mage (Attacker)
-        let mage = world.spawn((
-            InAttackRange,
-            AttackStats {
-                damage: fireball_damage,
-                rate: 1.0,
-                damage_type: DamageType::FireMagical,
-            },
-            AttackRange(ranged_range),
-            CombatProfile {
-                primary: AttackProfile {
+        let mage = world
+            .spawn((
+                InAttackRange,
+                AttackStats {
                     damage: fireball_damage,
                     rate: 1.0,
-                    range: ranged_range,
                     damage_type: DamageType::FireMagical,
                 },
-                secondary: Some(AttackProfile {
-                    damage: melee_damage,
-                    rate: 1.0,
-                    range: melee_range,
-                    damage_type: DamageType::PhysicalBasic,
-                }),
-                mana_cost: fireball_cost,
-            },
-            AttackTimer(0.0),
-            Mana {
-                current: fireball_cost, // Enough for 1 fireball
-                max: MAGE_MANA_MAX,
-                regen: 0.0,
-            },
-        )).id();
+                AttackRange(ranged_range),
+                CombatProfile {
+                    primary: AttackProfile {
+                        damage: fireball_damage,
+                        rate: 1.0,
+                        range: ranged_range,
+                        damage_type: DamageType::FireMagical,
+                    },
+                    secondary: Some(AttackProfile {
+                        damage: melee_damage,
+                        rate: 1.0,
+                        range: melee_range,
+                        damage_type: DamageType::PhysicalBasic,
+                    }),
+                    mana_cost: fireball_cost,
+                },
+                AttackTimer(0.0),
+                Mana {
+                    current: fireball_cost, // Enough for 1 fireball
+                    max: MAGE_MANA_MAX,
+                    regen: 0.0,
+                },
+            ))
+            .id();
 
         // Target
-        let target = world.spawn((
-            Health { current: 100.0, max: 100.0 },
-        )).id();
+        let target = world
+            .spawn((Health {
+                current: 100.0,
+                max: 100.0,
+            },))
+            .id();
 
         world.entity_mut(mage).insert(Target(target));
 
         // 1. First attack: should be Fireball
         update_active_combat_stats(&mut world);
         process_combat(&mut world, 0.1);
-        
+
         let target_health = world.entity(target).get::<Health>().unwrap().current;
-        assert_eq!(target_health, 100.0 - fireball_damage, "Should deal fireball damage");
-        
+        assert_eq!(
+            target_health,
+            100.0 - fireball_damage,
+            "Should deal fireball damage"
+        );
+
         let mana = world.entity(mage).get::<Mana>().unwrap().current;
         assert_eq!(mana, 0.0, "Should consume mana for fireball");
 
@@ -1027,11 +1104,23 @@ mod tests {
         process_combat(&mut world, 0.1);
 
         let target_health = world.entity(target).get::<Health>().unwrap().current;
-        assert_eq!(target_health, 100.0 - fireball_damage - melee_damage, "Should deal weak melee damage when out of mana");
-        
+        assert_eq!(
+            target_health,
+            100.0 - fireball_damage - melee_damage,
+            "Should deal weak melee damage when out of mana"
+        );
+
         let stats = world.entity(mage).get::<AttackStats>().unwrap();
-        assert_eq!(stats.damage_type, DamageType::PhysicalBasic, "Should switch to PhysicalBasic when out of mana");
-        assert_eq!(world.entity(mage).get::<AttackRange>().unwrap().0, melee_range, "Should switch to melee range");
+        assert_eq!(
+            stats.damage_type,
+            DamageType::PhysicalBasic,
+            "Should switch to PhysicalBasic when out of mana"
+        );
+        assert_eq!(
+            world.entity(mage).get::<AttackRange>().unwrap().0,
+            melee_range,
+            "Should switch to melee range"
+        );
 
         // 3. Third attack: mana regenerated enough for fireball
         world.entity_mut(mage).insert(Mana {
@@ -1044,11 +1133,23 @@ mod tests {
         process_combat(&mut world, 0.1);
 
         let target_health = world.entity(target).get::<Health>().unwrap().current;
-        assert_eq!(target_health, 100.0 - fireball_damage - melee_damage - fireball_damage, "Should deal fireball damage again after mana regen");
+        assert_eq!(
+            target_health,
+            100.0 - fireball_damage - melee_damage - fireball_damage,
+            "Should deal fireball damage again after mana regen"
+        );
 
         let stats = world.entity(mage).get::<AttackStats>().unwrap();
-        assert_eq!(stats.damage_type, DamageType::FireMagical, "Should switch back to FireMagical when mana is sufficient");
-        assert_eq!(world.entity(mage).get::<AttackRange>().unwrap().0, ranged_range, "Should switch back to ranged range");
+        assert_eq!(
+            stats.damage_type,
+            DamageType::FireMagical,
+            "Should switch back to FireMagical when mana is sufficient"
+        );
+        assert_eq!(
+            world.entity(mage).get::<AttackRange>().unwrap().0,
+            ranged_range,
+            "Should switch back to ranged range"
+        );
     }
 
     #[test]
@@ -1103,22 +1204,29 @@ mod tests {
         let mut world = World::new();
 
         // Attacker
-        let attacker = world.spawn((
-            Position { x: 0.0, y: 0.0 },
-            InAttackRange,
-            AttackStats {
-                damage: 10.0,
-                rate: 1.0,
-                damage_type: DamageType::PhysicalPierce,
-            },
-            AttackTimer(0.0),
-        )).id();
+        let attacker = world
+            .spawn((
+                Position { x: 0.0, y: 0.0 },
+                InAttackRange,
+                AttackStats {
+                    damage: 10.0,
+                    rate: 1.0,
+                    damage_type: DamageType::PhysicalPierce,
+                },
+                AttackTimer(0.0),
+            ))
+            .id();
 
         // Target
-        let target = world.spawn((
-            Position { x: 10.0, y: 0.0 },
-            Health { current: 100.0, max: 100.0 },
-        )).id();
+        let target = world
+            .spawn((
+                Position { x: 10.0, y: 0.0 },
+                Health {
+                    current: 100.0,
+                    max: 100.0,
+                },
+            ))
+            .id();
 
         world.entity_mut(attacker).insert(Target(target));
 
@@ -1139,37 +1247,49 @@ mod tests {
 
         // 1. Worker outside the board (X > 600)
         let worker_pos = Position { x: 700.0, y: 100.0 };
-        let worker = world.spawn((
-            worker_pos,
-            Worker,
-            CollisionRadius(10.0),
-        )).id();
+        let worker = world
+            .spawn((worker_pos, Worker, CollisionRadius(10.0)))
+            .id();
 
         // 2. Normal Unit overlapping with the worker
         let unit_pos = Position { x: 595.0, y: 100.0 };
-        let _unit = world.spawn((
-            unit_pos,
-            CollisionRadius(10.0),
-        )).id();
+        let _unit = world.spawn((unit_pos, CollisionRadius(10.0))).id();
 
         update_combat_movement(&mut world, 0.1);
 
         // Assert Worker position is UNCHANGED (not clamped to 600, not pushed by unit)
         let final_worker_pos = world.entity(worker).get::<Position>().unwrap();
-        assert_eq!(final_worker_pos.x, 700.0, "Worker should not be clamped to board");
-        assert_eq!(final_worker_pos.y, 100.0, "Worker should not be moved by combat systems");
+        assert_eq!(
+            final_worker_pos.x, 700.0,
+            "Worker should not be clamped to board"
+        );
+        assert_eq!(
+            final_worker_pos.y, 100.0,
+            "Worker should not be moved by combat systems"
+        );
 
         // Assert Unit position is NOT pushed by the worker
         // If the worker was considered, the unit (X=595) would be pushed left by the worker (X=700 is far, wait)
         // Let's overlap them better: Worker at 595, Unit at 590.
-        
+
         let mut world2 = World::new();
-        let _worker2 = world2.spawn((Position { x: 595.0, y: 100.0 }, Worker, CollisionRadius(10.0))).id();
-        let unit2 = world2.spawn((Position { x: 590.0, y: 100.0 }, CollisionRadius(10.0))).id();
-        
+        let _worker2 = world2
+            .spawn((
+                Position { x: 595.0, y: 100.0 },
+                Worker,
+                CollisionRadius(10.0),
+            ))
+            .id();
+        let unit2 = world2
+            .spawn((Position { x: 590.0, y: 100.0 }, CollisionRadius(10.0)))
+            .id();
+
         update_combat_movement(&mut world2, 0.1);
-        
+
         let final_unit2_pos = world2.entity(unit2).get::<Position>().unwrap();
-        assert_eq!(final_unit2_pos.x, 590.0, "Unit should not be pushed by overlapping worker");
+        assert_eq!(
+            final_unit2_pos.x, 590.0,
+            "Unit should not be pushed by overlapping worker"
+        );
     }
 }

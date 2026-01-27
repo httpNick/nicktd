@@ -1,7 +1,7 @@
+use super::components::{DamageType, Position};
 use super::game_state::GamePhase;
 use super::player::Player;
 use super::shape::Shape;
-use super::components::{DamageType, Position};
 use serde::{Deserialize, Serialize};
 
 #[derive(Serialize, Clone, Debug)]

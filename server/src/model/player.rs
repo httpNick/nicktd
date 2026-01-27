@@ -32,13 +32,21 @@ mod tests {
 
     #[test]
     fn player_has_gold_field() {
-        let player = Player { id: 1, username: "test".to_string(), gold: 100 };
+        let player = Player {
+            id: 1,
+            username: "test".to_string(),
+            gold: 100,
+        };
         assert_eq!(player.gold, 100);
     }
 
     #[test]
     fn test_player_can_afford() {
-        let player = Player { id: 1, username: "test".to_string(), gold: 100 };
+        let player = Player {
+            id: 1,
+            username: "test".to_string(),
+            gold: 100,
+        };
         assert!(player.can_afford(50));
         assert!(player.can_afford(100));
         assert!(!player.can_afford(101));
@@ -46,8 +54,12 @@ mod tests {
 
     #[test]
     fn test_player_try_spend_gold() {
-        let mut player = Player { id: 1, username: "test".to_string(), gold: 100 };
-        
+        let mut player = Player {
+            id: 1,
+            username: "test".to_string(),
+            gold: 100,
+        };
+
         // Success case
         assert!(player.try_spend_gold(40));
         assert_eq!(player.gold, 60);

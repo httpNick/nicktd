@@ -4,7 +4,7 @@ use hyper_util::rt::TokioIo;
 use sqlx::SqlitePool;
 use std::collections::HashMap;
 use std::sync::Arc;
-use tokio::sync::{broadcast, mpsc, Mutex};
+use tokio::sync::{Mutex, broadcast, mpsc};
 use tokio_tungstenite::WebSocketStream;
 
 pub struct ServerStateData {

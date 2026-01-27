@@ -7,8 +7,8 @@ use crate::{
     state::{ServerState, UpgradedWebSocket},
 };
 use futures_util::{
-    stream::{SplitSink, SplitStream},
     SinkExt, StreamExt,
+    stream::{SplitSink, SplitStream},
 };
 use tokio::sync::{broadcast, mpsc};
 use tokio_tungstenite::tungstenite::Message;

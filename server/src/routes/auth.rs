@@ -6,8 +6,9 @@ use crate::{
 use chrono::{Duration, Utc};
 use http_body_util::{BodyExt, Full};
 use hyper::{
+    Response, StatusCode,
     body::{Bytes, Incoming as Body},
-    header, Response, StatusCode,
+    header,
 };
 use log::error;
 
@@ -66,13 +67,9 @@ pub async fn handle_register(
     }
 }
 
-
 use uuid::Uuid;
 
-pub async fn handle_login(
-    req: hyper::Request<Body>,
-    state: ServerState,
-) -> Response<Full<Bytes>> {
+pub async fn handle_login(req: hyper::Request<Body>, state: ServerState) -> Response<Full<Bytes>> {
     let body_bytes = match req.collect().await {
         Ok(body) => body.to_bytes(),
         Err(_) => {
@@ -99,11 +96,8 @@ pub async fn handle_login(
                         )
                         .await
                         {
-                            Ok(_) => match jwt::create_jwt(
-                                account.username,
-                                session_id,
-                                expires_at,
-                            ) {
+                            Ok(_) => match jwt::create_jwt(account.username, session_id, expires_at)
+                            {
                                 Ok(token) => Response::builder()
                                     .status(StatusCode::OK)
                                     .header(header::CONTENT_TYPE, "application/json")
@@ -166,10 +160,7 @@ pub async fn handle_login(
     }
 }
 
-pub async fn handle_logout(
-    req: hyper::Request<Body>,
-    state: ServerState,
-) -> Response<Full<Bytes>> {
+pub async fn handle_logout(req: hyper::Request<Body>, state: ServerState) -> Response<Full<Bytes>> {
     let auth_header = req.headers().get(header::AUTHORIZATION);
     if let Some(auth_header) = auth_header {
         if let Ok(auth_str) = auth_header.to_str() {
@@ -181,7 +172,8 @@ pub async fn handle_logout(
                     {
                         // Check if the session ID in the token matches the one in the database
                         if account.session_id.as_deref() == Some(&claims.sid) {
-                            if let Err(e) = database::clear_session(&state.db_pool, account.id).await
+                            if let Err(e) =
+                                database::clear_session(&state.db_pool, account.id).await
                             {
                                 error!("Failed to clear session: {}", e);
                                 return Response::builder()

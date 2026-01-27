@@ -4,8 +4,9 @@ use crate::{
 };
 use http_body_util::Full;
 use hyper::{
+    Method, Request, Response, StatusCode,
     body::{Bytes, Incoming as Body},
-    header, Method, Request, Response, StatusCode,
+    header,
 };
 
 pub async fn router(
@@ -38,10 +39,7 @@ pub async fn router(
 
     // Add CORS headers to all responses
     let headers = response.headers_mut();
-    headers.insert(
-        header::ACCESS_CONTROL_ALLOW_ORIGIN,
-        "*".parse().unwrap(),
-    );
+    headers.insert(header::ACCESS_CONTROL_ALLOW_ORIGIN, "*".parse().unwrap());
     headers.insert(
         header::ACCESS_CONTROL_ALLOW_METHODS,
         "GET, POST, OPTIONS".parse().unwrap(),
