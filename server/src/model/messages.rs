@@ -1,7 +1,17 @@
 use super::game_state::GamePhase;
 use super::player::Player;
 use super::shape::Shape;
+use super::components::{DamageType, Position};
 use serde::{Deserialize, Serialize};
+
+#[derive(Serialize, Clone, Debug)]
+pub struct CombatEvent {
+    pub attacker_id: u32,
+    pub target_id: u32,
+    pub attack_type: DamageType,
+    pub start_pos: Position,
+    pub end_pos: Position,
+}
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct PlaceMessage {
@@ -60,6 +70,7 @@ pub struct SerializableGameState {
 pub enum ServerMessage {
     LobbyStatus(Vec<LobbyInfo>),
     GameState(SerializableGameState),
+    CombatEvents(Vec<CombatEvent>),
     PlayerId(i64),
     Error(String),
 }

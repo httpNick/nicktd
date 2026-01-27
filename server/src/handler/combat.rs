@@ -1,12 +1,11 @@
 use crate::model::components::{
-    AttackRange, AttackStats, AttackTimer, CollisionRadius, DamageType, Enemy, Health, InAttackRange, Mana, Position,
-    Target, Worker,
+    AttackRange, AttackStats, AttackTimer, CollisionRadius, CombatProfile, Enemy, Health,
+    InAttackRange, Mana, Position, Target, Worker,
 };
+use crate::model::messages::CombatEvent;
 use bevy_ecs::prelude::{Entity, With, Without, World};
 
 pub const SPEED: f32 = 100.0; // pixels per second
-pub const DEFAULT_COLLISION_RADIUS: f32 = 20.0;
-pub const DEFAULT_ATTACK_RANGE: f32 = 45.0; // Melee range: slightly more than 2x radius to ensure they can hit
 
 pub fn update_targeting(world: &mut World) {
     // --- 1. VALIDATE AND REMOVE INVALID TARGETS IMMEDIATELY ---
@@ -183,9 +182,52 @@ pub fn update_combat_movement(world: &mut World, tick_delta: f32) {
     }
 }
 
-pub fn process_combat(world: &mut World, tick_delta: f32) {
-    let mut damage_to_apply = Vec::new(); // (TargetEntity, Damage)
+pub fn update_active_combat_stats(world: &mut World) {
+    let mut updates = Vec::new(); // (Entity, damage, rate, range, type)
+
+    let mut query = world.query::<(Entity, &CombatProfile, Option<&Mana>, &AttackStats, &AttackRange)>();
+    for (entity, profile, mana_opt, current_stats, current_range) in query.iter(world) {
+        let use_primary = if profile.mana_cost > 0.0 {
+            if let Some(mana) = mana_opt {
+                mana.current >= profile.mana_cost
+            } else {
+                false
+            }
+        } else {
+            true
+        };
+
+        let selected = if use_primary {
+            &profile.primary
+        } else {
+            profile.secondary.as_ref().unwrap_or(&profile.primary)
+        };
+
+        if selected.damage != current_stats.damage
+            || selected.rate != current_stats.rate
+            || selected.damage_type != current_stats.damage_type
+            || selected.range != current_range.0
+        {
+            updates.push((entity, selected.damage, selected.rate, selected.range, selected.damage_type));
+        }
+    }
+
+    for (entity, damage, rate, range, damage_type) in updates {
+        if let Some(mut stats) = world.get_mut::<AttackStats>(entity) {
+            stats.damage = damage;
+            stats.rate = rate;
+            stats.damage_type = damage_type;
+        }
+        if let Some(mut r) = world.get_mut::<AttackRange>(entity) {
+            r.0 = range;
+        }
+    }
+}
+
+pub fn process_combat(world: &mut World, tick_delta: f32) -> Vec<CombatEvent> {
+    let mut attacks = Vec::new(); // (AttackerEntity, TargetEntity, Damage, DamageType)
     let mut timer_updates = Vec::new(); // (AttackerEntity, NewTimerValue)
+    let mut mana_updates = Vec::new(); // (AttackerEntity, NewManaValue)
 
     let mut query = world.query::<(
         Entity,
@@ -193,16 +235,25 @@ pub fn process_combat(world: &mut World, tick_delta: f32) {
         &AttackTimer,
         Option<&Target>,
         Option<&InAttackRange>,
+        Option<&CombatProfile>,
+        Option<&Mana>,
     )>();
-    for (attacker_entity, stats, timer, target_opt, in_range_opt) in query.iter(world) {
+    for (attacker_entity, stats, timer, target_opt, in_range_opt, profile_opt, mana_opt) in query.iter(world) {
         // Update timer
         let mut new_timer = (timer.0 - tick_delta).max(0.0);
 
         // Try to attack if in range and timer is 0
         if in_range_opt.is_some() && new_timer <= 0.0 {
             if let Some(target) = target_opt {
-                // We deal damage!
-                damage_to_apply.push((target.0, stats.damage));
+                // Deduct mana if it was a primary attack with cost
+                if let (Some(profile), Some(mana)) = (profile_opt, mana_opt) {
+                    if profile.mana_cost > 0.0 && mana.current >= profile.mana_cost {
+                        mana_updates.push((attacker_entity, mana.current - profile.mana_cost));
+                    }
+                }
+
+                // Record attack
+                attacks.push((attacker_entity, target.0, stats.damage, stats.damage_type));
                 // Reset timer: 1.0 / rate
                 new_timer = 1.0 / stats.rate;
             }
@@ -218,12 +269,35 @@ pub fn process_combat(world: &mut World, tick_delta: f32) {
         }
     }
 
-    // Apply damage
-    for (target_entity, damage) in damage_to_apply {
+    // Apply mana updates
+    for (entity, new_val) in mana_updates {
+        if let Some(mut mana) = world.get_mut::<Mana>(entity) {
+            mana.current = new_val;
+        }
+    }
+
+    let mut combat_events = Vec::new();
+
+    // Apply damage and generate events
+    for (attacker_entity, target_entity, damage, damage_type) in attacks {
+        // Capture positions for event
+        let start_pos = world.get::<Position>(attacker_entity).copied().unwrap_or(Position { x: 0.0, y: 0.0 });
+        let end_pos = world.get::<Position>(target_entity).copied().unwrap_or(Position { x: 0.0, y: 0.0 });
+
+        combat_events.push(CombatEvent {
+            attacker_id: attacker_entity.index(),
+            target_id: target_entity.index(),
+            attack_type: damage_type,
+            start_pos,
+            end_pos,
+        });
+
         if let Some(mut health) = world.get_mut::<Health>(target_entity) {
             health.current -= damage;
         }
     }
+
+    combat_events
 }
 
 pub fn cleanup_dead_entities(world: &mut World) {
@@ -251,7 +325,8 @@ pub fn update_mana(world: &mut World, tick_delta: f32) {
 mod tests {
     use super::*;
     use crate::handler::worker::{CART_POSITIONS, VEIN_POSITIONS};
-    use crate::model::components::TargetPositions;
+    use crate::model::unit_config::{DEFAULT_ATTACK_RANGE, FIREBALL_MANA_COST, MAGE_MELEE_DAMAGE};
+    use crate::model::components::{TargetPositions, DamageType, AttackProfile};
     use crate::model::shape::Shape;
 
     #[test]
@@ -531,6 +606,16 @@ mod tests {
                     rate: 1.0,
                     damage_type: DamageType::PhysicalBasic,
                 }, // 1 attack per second
+                CombatProfile {
+                    primary: AttackProfile {
+                        damage: 10.0,
+                        rate: 1.0,
+                        range: DEFAULT_ATTACK_RANGE,
+                        damage_type: DamageType::PhysicalBasic,
+                    },
+                    secondary: None,
+                    mana_cost: 0.0,
+                },
                 AttackTimer(0.0), // Ready to attack
             ))
             .id();
@@ -736,6 +821,99 @@ mod tests {
     }
 
     #[test]
+    fn mage_switches_to_melee_when_out_of_mana() {
+        use crate::model::components::{Mana, AttackStats, AttackRange, CombatProfile, AttackProfile, DamageType, Health};
+        use crate::model::unit_config::{MAGE_MANA_MAX, RANGED_ATTACK_RANGE};
+
+        let mut world = World::new();
+
+        let fireball_cost = FIREBALL_MANA_COST;
+        let melee_damage = MAGE_MELEE_DAMAGE;
+        let fireball_damage = 10.0;
+        let ranged_range = RANGED_ATTACK_RANGE;
+        let melee_range = DEFAULT_ATTACK_RANGE;
+
+        // Mage (Attacker)
+        let mage = world.spawn((
+            InAttackRange,
+            AttackStats {
+                damage: fireball_damage,
+                rate: 1.0,
+                damage_type: DamageType::FireMagical,
+            },
+            AttackRange(ranged_range),
+            CombatProfile {
+                primary: AttackProfile {
+                    damage: fireball_damage,
+                    rate: 1.0,
+                    range: ranged_range,
+                    damage_type: DamageType::FireMagical,
+                },
+                secondary: Some(AttackProfile {
+                    damage: melee_damage,
+                    rate: 1.0,
+                    range: melee_range,
+                    damage_type: DamageType::PhysicalBasic,
+                }),
+                mana_cost: fireball_cost,
+            },
+            AttackTimer(0.0),
+            Mana {
+                current: fireball_cost, // Enough for 1 fireball
+                max: MAGE_MANA_MAX,
+                regen: 0.0,
+            },
+        )).id();
+
+        // Target
+        let target = world.spawn((
+            Health { current: 100.0, max: 100.0 },
+        )).id();
+
+        world.entity_mut(mage).insert(Target(target));
+
+        // 1. First attack: should be Fireball
+        update_active_combat_stats(&mut world);
+        process_combat(&mut world, 0.1);
+        
+        let target_health = world.entity(target).get::<Health>().unwrap().current;
+        assert_eq!(target_health, 100.0 - fireball_damage, "Should deal fireball damage");
+        
+        let mana = world.entity(mage).get::<Mana>().unwrap().current;
+        assert_eq!(mana, 0.0, "Should consume mana for fireball");
+
+        // 2. Second attack: out of mana, should be weak melee
+        // Reset timer manually for test
+        world.entity_mut(mage).insert(AttackTimer(0.0));
+        update_active_combat_stats(&mut world);
+        process_combat(&mut world, 0.1);
+
+        let target_health = world.entity(target).get::<Health>().unwrap().current;
+        assert_eq!(target_health, 100.0 - fireball_damage - melee_damage, "Should deal weak melee damage when out of mana");
+        
+        let stats = world.entity(mage).get::<AttackStats>().unwrap();
+        assert_eq!(stats.damage_type, DamageType::PhysicalBasic, "Should switch to PhysicalBasic when out of mana");
+        assert_eq!(world.entity(mage).get::<AttackRange>().unwrap().0, melee_range, "Should switch to melee range");
+
+        // 3. Third attack: mana regenerated enough for fireball
+        world.entity_mut(mage).insert(Mana {
+            current: FIREBALL_MANA_COST,
+            max: MAGE_MANA_MAX,
+            regen: 0.0,
+        });
+        world.entity_mut(mage).insert(AttackTimer(0.0));
+        update_active_combat_stats(&mut world);
+        process_combat(&mut world, 0.1);
+
+        let target_health = world.entity(target).get::<Health>().unwrap().current;
+        assert_eq!(target_health, 100.0 - fireball_damage - melee_damage - fireball_damage, "Should deal fireball damage again after mana regen");
+
+        let stats = world.entity(mage).get::<AttackStats>().unwrap();
+        assert_eq!(stats.damage_type, DamageType::FireMagical, "Should switch back to FireMagical when mana is sufficient");
+        assert_eq!(world.entity(mage).get::<AttackRange>().unwrap().0, ranged_range, "Should switch back to ranged range");
+    }
+
+    #[test]
     fn target_reacquisition_after_kill() {
         let mut world = World::new();
 
@@ -779,5 +957,41 @@ mod tests {
             enemy2,
             "Unit should now target the second enemy"
         );
+    }
+
+    #[test]
+    fn process_combat_returns_events() {
+        use crate::model::components::{AttackStats, AttackTimer, DamageType, Health, Position};
+        let mut world = World::new();
+
+        // Attacker
+        let attacker = world.spawn((
+            Position { x: 0.0, y: 0.0 },
+            InAttackRange,
+            AttackStats {
+                damage: 10.0,
+                rate: 1.0,
+                damage_type: DamageType::PhysicalPierce,
+            },
+            AttackTimer(0.0),
+        )).id();
+
+        // Target
+        let target = world.spawn((
+            Position { x: 10.0, y: 0.0 },
+            Health { current: 100.0, max: 100.0 },
+        )).id();
+
+        world.entity_mut(attacker).insert(Target(target));
+
+        let events = process_combat(&mut world, 0.1);
+
+        assert_eq!(events.len(), 1, "Should return 1 combat event");
+        let event = &events[0];
+        assert_eq!(event.attacker_id, attacker.index());
+        assert_eq!(event.target_id, target.index());
+        assert_eq!(event.attack_type, DamageType::PhysicalPierce);
+        assert_eq!(event.start_pos, Position { x: 0.0, y: 0.0 });
+        assert_eq!(event.end_pos, Position { x: 10.0, y: 0.0 });
     }
 }

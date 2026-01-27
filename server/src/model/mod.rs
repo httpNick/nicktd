@@ -6,3 +6,4 @@ pub mod lobby;
 pub mod messages;
 pub mod player;
 pub mod shape;
+pub mod unit_config;

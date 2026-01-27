@@ -1,58 +1,66 @@
 use bevy_ecs::prelude::{World, Entity};
-use crate::model::components::{Position, ShapeComponent, Enemy, Worker, CollisionRadius, AttackRange, PlayerIdComponent, WorkerState, TargetPositions, Health, AttackStats, AttackTimer, DamageType, DefenseStats, DefenseSpecialty, Resistances};
+use crate::model::components::{Position, ShapeComponent, Enemy, Worker, CollisionRadius, AttackRange, PlayerIdComponent, WorkerState, TargetPositions, Health, AttackStats, AttackTimer, DefenseStats, DefenseSpecialty, Resistances};
 use crate::model::shape::Shape;
-use crate::handler::combat::{DEFAULT_COLLISION_RADIUS, DEFAULT_ATTACK_RANGE};
-
-pub const DEFAULT_HEALTH: f32 = 100.0;
-pub const DEFAULT_DAMAGE: f32 = 10.0;
-pub const DEFAULT_ATTACK_RATE: f32 = 1.0; // Attacks per second
+use crate::model::unit_config::{get_unit_profile, DEFAULT_HEALTH, DEFAULT_COLLISION_RADIUS, DEFAULT_ATTACK_RANGE};
 
 pub fn spawn_enemy(world: &mut World, pos: Position, shape: Shape) -> Entity {
-    let radius = match shape {
-        Shape::Square => DEFAULT_COLLISION_RADIUS + 2.0,
-        Shape::Circle => DEFAULT_COLLISION_RADIUS,
-        Shape::Triangle => DEFAULT_COLLISION_RADIUS - 2.0,
-    };
-
-    world.spawn((
+    let profile = get_unit_profile(shape);
+    let mut entity = world.spawn((
         pos,
         ShapeComponent(shape),
         Enemy,
-        CollisionRadius(radius),
-        AttackRange(DEFAULT_ATTACK_RANGE),
+        CollisionRadius(profile.radius),
+        AttackRange(profile.combat.primary.range),
         Health { current: DEFAULT_HEALTH, max: DEFAULT_HEALTH },
-        AttackStats { damage: DEFAULT_DAMAGE, rate: DEFAULT_ATTACK_RATE, damage_type: DamageType::PhysicalBasic },
+        AttackStats { 
+            damage: profile.combat.primary.damage, 
+            rate: profile.combat.primary.rate, 
+            damage_type: profile.combat.primary.damage_type 
+        },
+        profile.combat,
         DefenseStats { 
             armor: 0.0, 
             resistances: Resistances { fire: 0.0, ice: 0.0, lightning: 0.0 },
             specialty: DefenseSpecialty::None 
         },
         AttackTimer(0.0),
-    )).id()
+    ));
+
+    if let Some(mana) = profile.mana {
+        entity.insert(mana);
+    }
+
+    entity.id()
 }
 
 pub fn spawn_unit(world: &mut World, pos: Position, shape: Shape, player_id: i64) -> Entity {
-    let radius = match shape {
-        Shape::Square => DEFAULT_COLLISION_RADIUS + 2.0,
-        Shape::Circle => DEFAULT_COLLISION_RADIUS,
-        Shape::Triangle => DEFAULT_COLLISION_RADIUS - 2.0,
-    };
-
-    world.spawn((
+    let profile = get_unit_profile(shape);
+    let mut entity = world.spawn((
         pos,
         ShapeComponent(shape),
         PlayerIdComponent(player_id),
-        CollisionRadius(radius),
-        AttackRange(DEFAULT_ATTACK_RANGE),
+        CollisionRadius(profile.radius),
+        AttackRange(profile.combat.primary.range),
         Health { current: DEFAULT_HEALTH, max: DEFAULT_HEALTH },
-        AttackStats { damage: DEFAULT_DAMAGE, rate: DEFAULT_ATTACK_RATE, damage_type: DamageType::PhysicalBasic },
+        AttackStats { 
+            damage: profile.combat.primary.damage, 
+            rate: profile.combat.primary.rate, 
+            damage_type: profile.combat.primary.damage_type 
+        },
+        profile.combat,
         DefenseStats { 
             armor: 0.0, 
             resistances: Resistances { fire: 0.0, ice: 0.0, lightning: 0.0 },
             specialty: DefenseSpecialty::None 
         },
         AttackTimer(0.0),
-    )).id()
+    ));
+
+    if let Some(mana) = profile.mana {
+        entity.insert(mana);
+    }
+
+    entity.id()
 }
 
 pub fn spawn_worker(world: &mut World, player_id: i64, targets: TargetPositions) -> Entity {
@@ -77,7 +85,6 @@ pub fn spawn_worker(world: &mut World, player_id: i64, targets: TargetPositions)
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::handler::combat::DEFAULT_COLLISION_RADIUS;
 
     #[test]
     fn spawn_helpers_apply_shape_radii() {
@@ -114,5 +121,35 @@ mod tests {
             assert!(stats.damage > 0.0);
             assert!(stats.rate > 0.0);
         }
+    }
+
+    #[test]
+    fn spawn_applies_specialized_stats() {
+        use crate::model::components::{AttackRange, AttackStats, DamageType, Mana};
+        let mut world = World::new();
+
+        // Triangle: Ranged Physical Pierce
+        let triangle = spawn_unit(&mut world, Position { x: 0.0, y: 0.0 }, Shape::Triangle, 1);
+        let t_stats = world.entity(triangle).get::<AttackStats>().unwrap();
+        let t_range = world.entity(triangle).get::<AttackRange>().unwrap();
+        assert_eq!(t_stats.damage_type, DamageType::PhysicalPierce);
+        assert!(t_range.0 > DEFAULT_ATTACK_RANGE, "Triangle should be ranged");
+
+        // Square: Melee Physical Basic
+        let square = spawn_unit(&mut world, Position { x: 0.0, y: 0.0 }, Shape::Square, 1);
+        let s_stats = world.entity(square).get::<AttackStats>().unwrap();
+        let s_range = world.entity(square).get::<AttackRange>().unwrap();
+        assert_eq!(s_stats.damage_type, DamageType::PhysicalBasic);
+        assert!(s_range.0 <= DEFAULT_ATTACK_RANGE, "Square should be melee");
+
+        // Circle: Fire Mage (Mana + Ranged Fire Magical)
+        let circle = spawn_unit(&mut world, Position { x: 0.0, y: 0.0 }, Shape::Circle, 1);
+        let c_stats = world.entity(circle).get::<AttackStats>().unwrap();
+        let c_range = world.entity(circle).get::<AttackRange>().unwrap();
+        let c_mana = world.entity(circle).get::<Mana>();
+        
+        assert_eq!(c_stats.damage_type, DamageType::FireMagical);
+        assert!(c_range.0 > DEFAULT_ATTACK_RANGE, "Circle should be ranged (Mage)");
+        assert!(c_mana.is_some(), "Circle (Mage) should have mana");
     }
 }

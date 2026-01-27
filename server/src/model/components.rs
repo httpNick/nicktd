@@ -1,8 +1,9 @@
 use bevy_ecs::prelude::{Component, Entity};
+use serde::{Deserialize, Serialize};
 
 use super::shape::Shape;
 
-#[derive(Component, Clone, Copy, Debug, PartialEq)]
+#[derive(Component, Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Position {
     pub x: f32,
     pub y: f32,
@@ -54,7 +55,7 @@ pub struct Health {
     pub max: f32,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub enum DamageType {
     PhysicalPierce,
     PhysicalBasic,
@@ -69,11 +70,27 @@ pub struct Resistances {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
+#[allow(dead_code)]
 pub enum DefenseSpecialty {
     None,
     Armored,
     MagicResistant,
     RangeResistant,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct AttackProfile {
+    pub damage: f32,
+    pub rate: f32,
+    pub range: f32,
+    pub damage_type: DamageType,
+}
+
+#[derive(Component, Clone, Copy, Debug, PartialEq)]
+pub struct CombatProfile {
+    pub primary: AttackProfile,
+    pub secondary: Option<AttackProfile>,
+    pub mana_cost: f32,
 }
 
 #[derive(Component, Clone, Copy, Debug, PartialEq)]

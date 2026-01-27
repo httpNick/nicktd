@@ -64,6 +64,12 @@ impl Lobby {
         let msg_str = serde_json::to_string(&msg).unwrap();
         let _ = self.tx.send(msg_str);
     }
+
+    pub fn broadcast_message(&self, message: &ServerMessage) {
+        if let Ok(msg_str) = serde_json::to_string(message) {
+            let _ = self.tx.send(msg_str);
+        }
+    }
 }
 
 #[cfg(test)]
