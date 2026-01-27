@@ -19,6 +19,7 @@ pub struct UnitProfile {
     pub radius: f32,
     pub combat: CombatProfile,
     pub mana: Option<Mana>,
+    pub gold_cost: u32,
 }
 
 pub fn get_unit_profile(shape: Shape) -> UnitProfile {
@@ -26,6 +27,12 @@ pub fn get_unit_profile(shape: Shape) -> UnitProfile {
         Shape::Square => DEFAULT_COLLISION_RADIUS + 2.0,
         Shape::Circle => DEFAULT_COLLISION_RADIUS,
         Shape::Triangle => DEFAULT_COLLISION_RADIUS - 2.0,
+    };
+
+    let gold_cost = match shape {
+        Shape::Square => 25,
+        Shape::Triangle => 40,
+        Shape::Circle => 75,
     };
 
     let combat = match shape {
@@ -80,5 +87,24 @@ pub fn get_unit_profile(shape: Shape) -> UnitProfile {
         radius,
         combat,
         mana,
+        gold_cost,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn unit_profiles_have_gold_costs() {
+        let square = get_unit_profile(Shape::Square);
+        let triangle = get_unit_profile(Shape::Triangle);
+        let circle = get_unit_profile(Shape::Circle);
+
+        // Expected costs: Square (25), Triangle (40), Circle (75)
+        // These will fail to compile initially because gold_cost field is missing
+        assert_eq!(square.gold_cost, 25);
+        assert_eq!(triangle.gold_cost, 40);
+        assert_eq!(circle.gold_cost, 75);
     }
 }

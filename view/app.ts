@@ -189,7 +189,6 @@ function connectAndShowLobby() {
                 myPlayerId = serverMsg.data;
                 break;
             case 'Error':
-                isInGame = false;
                 // @ts-ignore
                 M.toast({ html: serverMsg.data });
                 break;
@@ -328,7 +327,7 @@ function updateGameState(newState: GameState) {
         if (me) goldDisplay.textContent = me.gold.toString();
     }
     gamePhase = newState.phase;
-    gameTimer = newState.phase_timer;
+    gameTimer = Math.max(0, newState.phase_timer);
     
     gamePhaseEl.textContent = gamePhase;
     gameTimerEl.textContent = gameTimer.toFixed(1);
