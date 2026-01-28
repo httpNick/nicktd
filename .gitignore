@@ -25,6 +25,7 @@ target
 #.idea/
 
 GEMINI.md
+.agent/
 .gemini/
 .kiro/
 

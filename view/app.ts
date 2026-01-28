@@ -261,7 +261,7 @@ function drawCheckerboard() {
 
 function drawWorkerArea() {
     ctx.strokeStyle = '#FFF';
-    
+
     // Board boundaries
     ctx.beginPath();
     ctx.moveTo(LEFT_BOARD_END, 0);
@@ -349,7 +349,7 @@ function updateGameState(newState: GameState) {
     }
     gamePhase = newState.phase;
     gameTimer = Math.max(0, newState.phase_timer);
-    
+
     gamePhaseEl.textContent = gamePhase;
     gameTimerEl.textContent = gameTimer.toFixed(1);
 }
@@ -376,10 +376,10 @@ function render() {
         drawCheckerboard();
         drawWorkerArea();
         drawUnits(gameState);
-        
+
         const now = Date.now();
-        animationManager.update(now);
-        animationManager.draw(ctx, now);
+        animationManager.update();
+        animationManager.draw(ctx);
     }
     requestAnimationFrame(render);
 }
