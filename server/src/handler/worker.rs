@@ -22,13 +22,6 @@ enum WorkerAction {
 }
 
 pub fn update_workers(lobby: &mut Lobby, tick_delta: f32) {
-    if matches!(
-        lobby.game_state.phase,
-        crate::model::game_state::GamePhase::Build
-    ) {
-        return;
-    }
-
     let mut actions = Vec::new();
 
     let mut query = lobby.game_state.world.query_filtered::<(
@@ -114,12 +107,13 @@ pub fn update_workers(lobby: &mut Lobby, tick_delta: f32) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::model::game_state::GamePhase;
     use crate::model::player::Player;
 
     #[test]
     fn worker_behavior_cycle() {
         let mut lobby = Lobby::new();
-        lobby.game_state.phase = crate::model::game_state::GamePhase::Combat;
+        lobby.game_state.phase = GamePhase::Combat;
         // Add player
         lobby.players.push(Player {
             id: 1,
@@ -221,64 +215,49 @@ mod tests {
     }
 
     #[test]
-    fn test_workers_stay_idle_during_build_phase() {
-        let mut lobby = Lobby::new();
-        lobby.players.push(Player {
-            id: 1,
-            username: "test".to_string(),
-            gold: 100,
-        });
+    fn test_workers_active_in_all_phases() {
+        for phase in [GamePhase::Build, GamePhase::Combat, GamePhase::Victory] {
+            let mut lobby = Lobby::new();
+            lobby.game_state.phase = phase;
+            lobby.players.push(Player {
+                id: 1,
+                username: "test".to_string(),
+                gold: 100,
+            });
 
-        // Initial state is Build phase
-        assert!(matches!(
-            lobby.game_state.phase,
-            crate::model::game_state::GamePhase::Build
-        ));
+            let initial_pos = Position { x: 700.0, y: 250.0 };
+            let targets = TargetPositions {
+                vein: VEIN_POSITIONS[0],
+                cart: CART_POSITIONS[0],
+            };
 
-        let initial_pos = Position { x: 700.0, y: 250.0 };
-        let targets = TargetPositions {
-            vein: VEIN_POSITIONS[0],
-            cart: CART_POSITIONS[0],
-        };
+            // Spawn Worker
+            let worker = lobby
+                .game_state
+                .world
+                .spawn((
+                    initial_pos,
+                    Worker,
+                    WorkerState::MovingToVein,
+                    PlayerIdComponent(1),
+                    targets,
+                ))
+                .id();
 
-        // Spawn Worker
-        let worker = lobby
-            .game_state
-            .world
-            .spawn((
-                initial_pos,
-                Worker,
-                WorkerState::MovingToVein,
-                PlayerIdComponent(1),
-                targets,
-            ))
-            .id();
+            let tick_delta = 1.0 / 30.0;
+            update_workers(&mut lobby, tick_delta);
 
-        let tick_delta = 1.0 / 30.0;
-        update_workers(&mut lobby, tick_delta);
-
-        let current_pos = lobby
-            .game_state
-            .world
-            .entity(worker)
-            .get::<Position>()
-            .unwrap();
-        assert_eq!(current_pos.x, initial_pos.x);
-        assert_eq!(
-            current_pos.y, initial_pos.y,
-            "Worker should not move during Build phase"
-        );
-
-        let state = lobby
-            .game_state
-            .world
-            .entity(worker)
-            .get::<WorkerState>()
-            .unwrap();
-        assert_eq!(
-            *state,
-            WorkerState::MovingToVein,
-            "Worker state should not change during Build phase"
-        );
+            let current_pos = lobby
+                .game_state
+                .world
+                .entity(worker)
+                .get::<Position>()
+                .unwrap();
+            assert!(
+                current_pos.y < initial_pos.y,
+                "Worker should move during phase {:?}",
+                phase
+            );
+        }
     }
 }

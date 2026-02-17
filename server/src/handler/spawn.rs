@@ -1,14 +1,29 @@
 use crate::model::components::{
-    AttackRange, AttackStats, AttackTimer, CollisionRadius, DefenseSpecialty, DefenseStats, Enemy,
-    Health, HomePosition, PlayerIdComponent, Position, Resistances, ShapeComponent,
+    AttackRange, AttackStats, AttackTimer, Boss, CollisionRadius, DefenseSpecialty, DefenseStats,
+    Enemy, Health, HomePosition, PlayerIdComponent, Position, Resistances, ShapeComponent,
     TargetPositions, Worker, WorkerState,
 };
 use crate::model::shape::Shape;
-use crate::model::unit_config::{DEFAULT_COLLISION_RADIUS, DEFAULT_HEALTH, get_unit_profile};
+use crate::model::unit_config::{
+    BOSS_DAMAGE_MULTIPLIER, BOSS_HEALTH_MULTIPLIER, DEFAULT_COLLISION_RADIUS, DEFAULT_HEALTH,
+    get_unit_profile,
+};
 use bevy_ecs::prelude::{Entity, World};
 
-pub fn spawn_enemy(world: &mut World, pos: Position, shape: Shape) -> Entity {
+pub fn spawn_enemy(world: &mut World, pos: Position, shape: Shape, wave: u32) -> Entity {
     let profile = get_unit_profile(shape);
+    let scaling_multiplier = crate::handler::wave::get_scaling_multiplier(wave);
+
+    let is_boss = wave == 6;
+    let (hp_multiplier, damage_multiplier) = if is_boss {
+        (BOSS_HEALTH_MULTIPLIER, BOSS_DAMAGE_MULTIPLIER)
+    } else {
+        (1.0, 1.0)
+    };
+
+    let final_health = DEFAULT_HEALTH * scaling_multiplier * hp_multiplier;
+    let final_damage = profile.combat.primary.damage * scaling_multiplier * damage_multiplier;
+
     let mut entity = world.spawn((
         pos,
         HomePosition(pos),
@@ -17,11 +32,11 @@ pub fn spawn_enemy(world: &mut World, pos: Position, shape: Shape) -> Entity {
         CollisionRadius(profile.radius),
         AttackRange(profile.combat.primary.range),
         Health {
-            current: DEFAULT_HEALTH,
-            max: DEFAULT_HEALTH,
+            current: final_health,
+            max: final_health,
         },
         AttackStats {
-            damage: profile.combat.primary.damage,
+            damage: final_damage,
             rate: profile.combat.primary.rate,
             damage_type: profile.combat.primary.damage_type,
         },
@@ -37,6 +52,10 @@ pub fn spawn_enemy(world: &mut World, pos: Position, shape: Shape) -> Entity {
         },
         AttackTimer(0.0),
     ));
+
+    if is_boss {
+        entity.insert(Boss);
+    }
 
     if let Some(mana) = profile.mana {
         entity.insert(mana);
@@ -145,7 +164,7 @@ mod tests {
         let unit_pos = Position { x: 10.0, y: 20.0 };
         let unit = spawn_unit(&mut world, unit_pos, Shape::Circle, 1);
         let enemy_pos = Position { x: 100.0, y: 200.0 };
-        let enemy = spawn_enemy(&mut world, enemy_pos, Shape::Circle);
+        let enemy = spawn_enemy(&mut world, enemy_pos, Shape::Circle, 1);
 
         for (entity, pos) in [(unit, unit_pos), (enemy, enemy_pos)] {
             let e = world.entity(entity);
@@ -206,5 +225,53 @@ mod tests {
             "Circle should be ranged (Mage)"
         );
         assert!(c_mana.is_some(), "Circle (Mage) should have mana");
+    }
+
+    #[test]
+    fn test_enemy_scaling_is_applied() {
+        use crate::handler::wave::get_scaling_multiplier;
+        let mut world = World::new();
+        let wave = 3;
+        let multiplier = get_scaling_multiplier(wave);
+
+        let enemy_id = spawn_enemy(&mut world, Position { x: 0.0, y: 0.0 }, Shape::Square, wave);
+        let e = world.entity(enemy_id);
+
+        let health = e.get::<Health>().unwrap();
+        let stats = e.get::<AttackStats>().unwrap();
+
+        assert!((health.max - DEFAULT_HEALTH * multiplier).abs() < 0.1);
+        assert!(
+            (stats.damage - get_unit_profile(Shape::Square).combat.primary.damage * multiplier)
+                .abs()
+                < 0.1
+        );
+    }
+
+    #[test]
+    fn test_wave_6_boss_spawning() {
+        use crate::handler::wave::get_scaling_multiplier;
+        let mut world = World::new();
+        let wave = 6;
+        let multiplier = get_scaling_multiplier(wave);
+
+        let enemy_id = spawn_enemy(&mut world, Position { x: 0.0, y: 0.0 }, Shape::Circle, wave);
+        let e = world.entity(enemy_id);
+
+        assert!(
+            e.get::<Boss>().is_some(),
+            "Wave 6 should have Boss component"
+        );
+
+        let health = e.get::<Health>().unwrap();
+        let stats = e.get::<AttackStats>().unwrap();
+
+        let expected_health = DEFAULT_HEALTH * multiplier * BOSS_HEALTH_MULTIPLIER;
+        let expected_damage = get_unit_profile(Shape::Circle).combat.primary.damage
+            * multiplier
+            * BOSS_DAMAGE_MULTIPLIER;
+
+        assert!((health.max - expected_health).abs() < 0.1);
+        assert!((stats.damage - expected_damage).abs() < 0.1);
     }
 }

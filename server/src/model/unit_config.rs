@@ -14,6 +14,9 @@ pub const RANGED_ATTACK_RANGE: f32 = 150.0;
 pub const MAGE_MANA_MAX: f32 = 100.0;
 pub const MAGE_MANA_REGEN: f32 = 5.0;
 
+pub const BOSS_HEALTH_MULTIPLIER: f32 = 10.0;
+pub const BOSS_DAMAGE_MULTIPLIER: f32 = 3.0;
+
 // --- Profile Structures ---
 pub struct UnitProfile {
     pub radius: f32,

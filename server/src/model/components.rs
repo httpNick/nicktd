@@ -25,6 +25,9 @@ pub struct PlayerIdComponent(pub i64);
 pub struct Enemy;
 
 #[derive(Component)]
+pub struct Boss;
+
+#[derive(Component)]
 pub struct Worker;
 
 #[derive(Component, Debug, Clone, Copy)]

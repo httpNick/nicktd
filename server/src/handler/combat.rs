@@ -441,6 +441,7 @@ mod tests {
             &mut world,
             Position { x: 100.0, y: 100.0 },
             Shape::Triangle,
+            1,
         );
 
         let targets = TargetPositions {
@@ -487,6 +488,7 @@ mod tests {
             &mut world,
             Position { x: 105.0, y: 105.0 },
             Shape::Triangle,
+            1,
         );
 
         // Spawn Normal Unit (farther than worker)
@@ -527,6 +529,7 @@ mod tests {
             &mut world,
             Position { x: 100.0, y: 0.0 }, // 100 pixels away
             Shape::Triangle,
+            1,
         );
 
         world.entity_mut(unit).insert(Target(enemy));
@@ -610,6 +613,7 @@ mod tests {
             &mut world,
             Position { x: 100.0, y: 0.0 },
             Shape::Triangle,
+            1,
         );
 
         world.entity_mut(unit).insert(Target(enemy));
@@ -854,6 +858,7 @@ mod tests {
             &mut world,
             Position { x: 10.0, y: 10.0 },
             Shape::Circle,
+            1,
         );
 
         // 1. Initial targeting
@@ -987,6 +992,7 @@ mod tests {
             &mut world,
             Position { x: 100.0, y: 0.0 },
             Shape::Circle,
+            1,
         );
 
         // 1. Targeting
@@ -1167,11 +1173,13 @@ mod tests {
             &mut world,
             Position { x: 10.0, y: 0.0 },
             Shape::Circle,
+            1,
         );
         let enemy2 = crate::handler::spawn::spawn_enemy(
             &mut world,
             Position { x: 100.0, y: 0.0 },
             Shape::Circle,
+            1,
         );
 
         // 1. Target first enemy (the closest one)
