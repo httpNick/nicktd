@@ -443,7 +443,7 @@ canvas.addEventListener('click', function (event) {
     } else {
         hideUiPanel();
         const row = Math.floor(clickY / SQUARE_SIZE);
-        const col = Math.floor(clickX / SQUARE_SIZE);
+        const col = Math.floor(localX / SQUARE_SIZE); // Use localX which is relative to board start
         const placeMessage = { action: 'place', payload: { shape: selectedShape, row, col } };
         if (socket && socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify(placeMessage));
     }
@@ -451,8 +451,12 @@ canvas.addEventListener('click', function (event) {
 
 sellButton.addEventListener('click', function () {
     if (selectedTower && selectedTower.owner_id === myPlayerId) {
+        let localX = selectedTower.x;
+        if (selectedTower.x >= RIGHT_BOARD_START) {
+            localX -= RIGHT_BOARD_START;
+        }
         const row = Math.floor(selectedTower.y / SQUARE_SIZE);
-        const col = Math.floor(selectedTower.x / SQUARE_SIZE);
+        const col = Math.floor(localX / SQUARE_SIZE);
         const sellMessage = { action: 'sell', payload: { row, col } };
         if (socket && socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify(sellMessage));
         hideUiPanel();

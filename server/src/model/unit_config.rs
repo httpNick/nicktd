@@ -9,7 +9,7 @@ pub const MAGE_MELEE_DAMAGE: f32 = 2.0;
 
 pub const DEFAULT_HEALTH: f32 = 100.0;
 pub const DEFAULT_DAMAGE: f32 = 10.0;
-pub const DEFAULT_ATTACK_RATE: f32 = 1.0;
+pub const DEFAULT_ATTACK_RATE: f32 = 0.8;
 pub const RANGED_ATTACK_RANGE: f32 = 150.0;
 pub const MAGE_MANA_MAX: f32 = 100.0;
 pub const MAGE_MANA_REGEN: f32 = 5.0;

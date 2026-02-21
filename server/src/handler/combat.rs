@@ -2,13 +2,11 @@ use crate::model::components::{
     AttackRange, AttackStats, AttackTimer, CollisionRadius, CombatProfile, Enemy, Health,
     HomePosition, InAttackRange, Mana, Position, Target, Worker,
 };
-use crate::model::constants::{
-    LEFT_BOARD_END, RIGHT_BOARD_END, RIGHT_BOARD_START, TOTAL_HEIGHT, TOTAL_WIDTH,
-};
+use crate::model::constants::{LEFT_BOARD_END, RIGHT_BOARD_END, RIGHT_BOARD_START, TOTAL_HEIGHT};
 use crate::model::messages::CombatEvent;
 use bevy_ecs::prelude::{Entity, With, Without, World};
 
-pub const SPEED: f32 = 100.0; // pixels per second
+pub const SPEED: f32 = 80.0; // pixels per second
 
 fn get_board(x: f32) -> Option<u8> {
     if x < LEFT_BOARD_END {
@@ -201,9 +199,26 @@ pub fn update_combat_movement(world: &mut World, tick_delta: f32) {
 
     // Second pass: Apply movements
     for (entity, dx, dy) in movements {
+        let radius = world
+            .get::<CollisionRadius>(entity)
+            .map(|r| r.0)
+            .unwrap_or(0.0);
+        let home_x = world
+            .get::<HomePosition>(entity)
+            .map(|h| h.0.x)
+            .unwrap_or(0.0);
+
         if let Some(mut pos) = world.get_mut::<Position>(entity) {
-            pos.x = (pos.x + dx).clamp(0.0, TOTAL_WIDTH);
-            pos.y = (pos.y + dy).clamp(0.0, TOTAL_HEIGHT);
+            pos.x += dx;
+            pos.y = (pos.y + dy).clamp(radius, TOTAL_HEIGHT - radius);
+
+            if home_x < LEFT_BOARD_END {
+                pos.x = pos.x.clamp(radius, LEFT_BOARD_END - radius);
+            } else {
+                pos.x = pos
+                    .x
+                    .clamp(RIGHT_BOARD_START + radius, RIGHT_BOARD_END - radius);
+            }
         }
     }
 
@@ -648,6 +663,7 @@ mod tests {
     fn entities_stay_within_bounds() {
         let mut world = World::new();
 
+        let radius = 10.0;
         // Spawn unit at the very edge
         let unit = crate::handler::spawn::spawn_unit(
             &mut world,
@@ -655,15 +671,13 @@ mod tests {
             Shape::Square,
             1,
         );
+        world.entity_mut(unit).insert(CollisionRadius(radius));
 
         // Spawn many units around it to push it out
-        for i in 0..10 {
+        for _ in 0..10 {
             let _ = crate::handler::spawn::spawn_unit(
                 &mut world,
-                Position {
-                    x: 10.0 + (i as f32),
-                    y: 10.0 + (i as f32),
-                },
+                Position { x: 15.0, y: 15.0 },
                 Shape::Square,
                 1,
             );
@@ -678,24 +692,22 @@ mod tests {
 
         let pos = world.entity(unit).get::<Position>().unwrap();
         assert!(
-            pos.x >= 0.0,
-            "Entity should not be pushed off the left edge (x={})",
-            pos.x
+            pos.x >= radius,
+            "Entity should not be pushed off the left edge (x={}, radius={})",
+            pos.x,
+            radius
         );
         assert!(
-            pos.y >= 0.0,
-            "Entity should not be pushed off the top edge (y={})",
-            pos.y
+            pos.y >= radius,
+            "Entity should not be pushed off the top edge (y={}, radius={})",
+            pos.y,
+            radius
         );
         assert!(
-            pos.x <= TOTAL_WIDTH,
-            "Entity should not be pushed off the right edge (x={})",
-            pos.x
-        );
-        assert!(
-            pos.y <= TOTAL_HEIGHT,
-            "Entity should not be pushed off the bottom edge (y={})",
-            pos.y
+            pos.x <= LEFT_BOARD_END - radius,
+            "Entity should not be pushed off the board edge (x={}, limit={})",
+            pos.x,
+            LEFT_BOARD_END - radius
         );
     }
 
