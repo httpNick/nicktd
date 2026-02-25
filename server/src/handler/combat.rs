@@ -1,5 +1,5 @@
 use crate::model::components::{
-    AttackRange, AttackStats, AttackTimer, CollisionRadius, CombatProfile, Enemy, Health,
+    AttackRange, AttackStats, AttackTimer, CollisionRadius, CombatProfile, Dead, Enemy, Health,
     HomePosition, InAttackRange, Mana, Position, Target, Worker,
 };
 use crate::model::constants::{LEFT_BOARD_END, RIGHT_BOARD_END, RIGHT_BOARD_START, TOTAL_HEIGHT};
@@ -51,7 +51,12 @@ pub fn update_targeting(world: &mut World) {
         .collect();
 
     if !enemy_positions.is_empty() {
-        let mut query = world.query_filtered::<(Entity, &Position), (Without<Enemy>, Without<Target>, Without<Worker>)>();
+        let mut query = world.query_filtered::<(Entity, &Position), (
+            Without<Enemy>,
+            Without<Target>,
+            Without<Worker>,
+            Without<Dead>,
+        )>();
         for (unit_entity, unit_pos) in query.iter(world) {
             let unit_board = get_board(unit_pos.x);
             if unit_board.is_none() {
@@ -78,7 +83,7 @@ pub fn update_targeting(world: &mut World) {
 
     // --- ENEMY TARGETING (Enemies target closest non-Worker Unit) ---
     let unit_positions: Vec<(Entity, Position)> = world
-        .query_filtered::<(Entity, &Position), (Without<Enemy>, Without<Worker>)>()
+        .query_filtered::<(Entity, &Position), (Without<Enemy>, Without<Worker>, Without<Dead>)>()
         .iter(world)
         .map(|(entity, pos)| (entity, Position { x: pos.x, y: pos.y }))
         .collect();
@@ -119,7 +124,7 @@ pub fn update_targeting(world: &mut World) {
 pub fn update_combat_movement(world: &mut World, tick_delta: f32) {
     // --- MOVEMENT & COLLISION SYSTEM ---
     let physical_entities: Vec<(Entity, Position, f32)> = world
-        .query_filtered::<(Entity, &Position, &CollisionRadius), Without<Worker>>()
+        .query_filtered::<(Entity, &Position, &CollisionRadius), (Without<Worker>, Without<Dead>)>()
         .iter(world)
         .map(|(e, p, r)| (e, *p, r.0))
         .collect();
@@ -134,7 +139,7 @@ pub fn update_combat_movement(world: &mut World, tick_delta: f32) {
         Option<&Target>,
         Option<&AttackRange>,
         &CollisionRadius,
-    ), Without<Worker>>();
+    ), (Without<Worker>, Without<Dead>)>();
     for (entity, pos, target_opt, attack_range_opt, collision_radius) in query.iter(world) {
         let mut velocity_x = 0.0;
         let mut velocity_y = 0.0;
@@ -254,29 +259,39 @@ pub fn update_combat_reset(world: &mut World) {
         return;
     }
 
-    let mut query = world.query::<(
-        Entity,
-        &mut Position,
-        &HomePosition,
-        Option<&mut Health>,
-        Option<&mut Mana>,
-    )>();
-    for (_entity, mut pos, home, health_opt, mana_opt) in query.iter_mut(world) {
-        if let Some(board_idx) = get_board(home.0.x) {
-            if boards_to_reset.contains(&board_idx) {
-                // Reset position
-                *pos = home.0;
+    // Pass 1: collect all entities on cleared boards, including Dead towers
+    let entities_to_restore: Vec<Entity> = {
+        let mut query = world.query::<(Entity, &HomePosition)>();
+        query
+            .iter(world)
+            .filter_map(|(entity, home)| {
+                get_board(home.0.x)
+                    .filter(|board_idx| boards_to_reset.contains(board_idx))
+                    .map(|_| entity)
+            })
+            .collect()
+    };
 
-                // Restore Health
-                if let Some(mut health) = health_opt {
-                    health.current = health.max;
-                }
-
-                // Restore Mana
-                if let Some(mut mana) = mana_opt {
-                    mana.current = mana.max;
-                }
+    // Pass 2: restore position, health, mana and remove Dead marker for each entity
+    for entity in entities_to_restore {
+        if let Some(home_pos) = world.get::<HomePosition>(entity).map(|h| h.0) {
+            if let Some(mut pos) = world.get_mut::<Position>(entity) {
+                *pos = home_pos;
             }
+        }
+
+        if let Some(mut health) = world.get_mut::<Health>(entity) {
+            let max = health.max;
+            health.current = max;
+        }
+
+        if let Some(mut mana) = world.get_mut::<Mana>(entity) {
+            let max = mana.max;
+            mana.current = max;
+        }
+
+        if world.get::<Dead>(entity).is_some() {
+            world.entity_mut(entity).remove::<Dead>();
         }
     }
 }
@@ -284,13 +299,13 @@ pub fn update_combat_reset(world: &mut World) {
 pub fn update_active_combat_stats(world: &mut World) {
     let mut updates = Vec::new(); // (Entity, damage, rate, range, type)
 
-    let mut query = world.query::<(
+    let mut query = world.query_filtered::<(
         Entity,
         &CombatProfile,
         Option<&Mana>,
         &AttackStats,
         &AttackRange,
-    )>();
+    ), Without<Dead>>();
     for (entity, profile, mana_opt, current_stats, current_range) in query.iter(world) {
         let use_primary = if profile.mana_cost > 0.0 {
             if let Some(mana) = mana_opt {
@@ -340,7 +355,7 @@ pub fn process_combat(world: &mut World, tick_delta: f32) -> Vec<CombatEvent> {
     let mut timer_updates = Vec::new(); // (AttackerEntity, NewTimerValue)
     let mut mana_updates = Vec::new(); // (AttackerEntity, NewManaValue)
 
-    let mut query = world.query::<(
+    let mut query = world.query_filtered::<(
         Entity,
         &AttackStats,
         &AttackTimer,
@@ -348,7 +363,7 @@ pub fn process_combat(world: &mut World, tick_delta: f32) -> Vec<CombatEvent> {
         Option<&InAttackRange>,
         Option<&CombatProfile>,
         Option<&Mana>,
-    )>();
+    ), Without<Dead>>();
     for (attacker_entity, stats, timer, target_opt, in_range_opt, profile_opt, mana_opt) in
         query.iter(world)
     {
@@ -420,16 +435,26 @@ pub fn process_combat(world: &mut World, tick_delta: f32) -> Vec<CombatEvent> {
 }
 
 pub fn cleanup_dead_entities(world: &mut World) {
-    let mut dead_entities = Vec::new();
+    let mut enemies_to_despawn = Vec::new();
+    let mut towers_to_tag = Vec::new();
+
     let mut query = world.query::<(Entity, &Health)>();
     for (entity, health) in query.iter(world) {
         if health.current <= 0.0 {
-            dead_entities.push(entity);
+            if world.get::<Enemy>(entity).is_some() {
+                enemies_to_despawn.push(entity);
+            } else {
+                towers_to_tag.push(entity);
+            }
         }
     }
 
-    for entity in dead_entities {
+    for entity in enemies_to_despawn {
         world.despawn(entity);
+    }
+
+    for entity in towers_to_tag {
+        world.entity_mut(entity).insert(Dead);
     }
 }
 
@@ -784,7 +809,7 @@ mod tests {
 
     #[test]
     fn cleanup_removes_dead_entities() {
-        use crate::model::components::Health;
+        use crate::model::components::{Dead, Health};
 
         let mut world = World::new();
 
@@ -814,12 +839,82 @@ mod tests {
             "Alive entity should still exist"
         );
         assert!(
-            !world.entities().contains(dead),
-            "Dead entity should be removed"
+            world.entity(alive).get::<Dead>().is_none(),
+            "Alive entity should not have Dead marker"
+        );
+        // Non-enemy entities at 0 HP are tagged Dead, not despawned
+        assert!(
+            world.entities().contains(dead),
+            "Non-enemy dead entity should remain in world"
         );
         assert!(
-            !world.entities().contains(overkill),
-            "Overkill entity should be removed"
+            world.entity(dead).get::<Dead>().is_some(),
+            "Non-enemy dead entity should have Dead marker"
+        );
+        assert!(
+            world.entities().contains(overkill),
+            "Non-enemy overkill entity should remain in world"
+        );
+        assert!(
+            world.entity(overkill).get::<Dead>().is_some(),
+            "Non-enemy overkill entity should have Dead marker"
+        );
+    }
+
+    #[test]
+    fn cleanup_enemy_despawned_tower_tagged_dead() {
+        use crate::model::components::{Dead, Health};
+
+        let mut world = World::new();
+
+        // Player tower at 0 HP (no Enemy marker)
+        let tower = world
+            .spawn(Health {
+                current: 0.0,
+                max: 100.0,
+            })
+            .id();
+
+        // Enemy at 0 HP
+        let enemy = world
+            .spawn((
+                Health {
+                    current: 0.0,
+                    max: 50.0,
+                },
+                Enemy,
+            ))
+            .id();
+
+        // Tower with positive HP should be unaffected
+        let healthy_tower = world
+            .spawn(Health {
+                current: 50.0,
+                max: 100.0,
+            })
+            .id();
+
+        cleanup_dead_entities(&mut world);
+
+        assert!(
+            world.entities().contains(tower),
+            "Tower entity should remain in world"
+        );
+        assert!(
+            world.entity(tower).get::<Dead>().is_some(),
+            "Tower should have Dead marker"
+        );
+        assert!(
+            !world.entities().contains(enemy),
+            "Enemy should be despawned"
+        );
+        assert!(
+            world.entities().contains(healthy_tower),
+            "Healthy tower should remain in world"
+        );
+        assert!(
+            world.entity(healthy_tower).get::<Dead>().is_none(),
+            "Healthy tower should not have Dead marker"
         );
     }
 
@@ -1262,6 +1357,123 @@ mod tests {
     }
 
     #[test]
+    fn dead_tower_does_not_acquire_target() {
+        let mut world = World::new();
+
+        // Spawn a dead tower on the left board
+        let dead_tower = crate::handler::spawn::spawn_unit(
+            &mut world,
+            Position { x: 100.0, y: 300.0 },
+            Shape::Square,
+            1,
+        );
+        world.entity_mut(dead_tower).insert(Dead);
+
+        // Spawn an enemy on the same board
+        let _enemy = crate::handler::spawn::spawn_enemy(
+            &mut world,
+            Position { x: 200.0, y: 300.0 },
+            Shape::Triangle,
+            1,
+        );
+
+        update_targeting(&mut world);
+
+        assert!(
+            world.entity(dead_tower).get::<Target>().is_none(),
+            "Dead tower should not acquire a target"
+        );
+    }
+
+    #[test]
+    fn enemy_does_not_target_dead_tower() {
+        let mut world = World::new();
+
+        // Spawn a dead tower close to the enemy position
+        let dead_tower = crate::handler::spawn::spawn_unit(
+            &mut world,
+            Position { x: 110.0, y: 300.0 },
+            Shape::Square,
+            1,
+        );
+        world.entity_mut(dead_tower).insert(Dead);
+
+        // Spawn a living tower farther from the enemy
+        let living_tower = crate::handler::spawn::spawn_unit(
+            &mut world,
+            Position { x: 300.0, y: 300.0 },
+            Shape::Square,
+            1,
+        );
+
+        // Enemy closer to the dead tower than the living tower
+        let enemy = crate::handler::spawn::spawn_enemy(
+            &mut world,
+            Position { x: 100.0, y: 300.0 },
+            Shape::Triangle,
+            1,
+        );
+
+        update_targeting(&mut world);
+
+        let target = world.entity(enemy).get::<Target>();
+        assert!(target.is_some(), "Enemy should have a target");
+        assert_eq!(
+            target.unwrap().0,
+            living_tower,
+            "Enemy should target the living tower, not the dead one"
+        );
+    }
+
+    #[test]
+    fn dead_tower_not_moved_by_physical_simulation() {
+        let mut world = World::new();
+
+        let radius = 15.0;
+
+        // Spawn a dead tower on the left board
+        let dead_tower = crate::handler::spawn::spawn_unit(
+            &mut world,
+            Position { x: 100.0, y: 300.0 },
+            Shape::Square,
+            1,
+        );
+        world.entity_mut(dead_tower).insert(Dead);
+        world.entity_mut(dead_tower).insert(CollisionRadius(radius));
+
+        // Spawn a living unit overlapping with the dead tower (5px gap, combined radius 30px)
+        let living_unit = crate::handler::spawn::spawn_unit(
+            &mut world,
+            Position { x: 105.0, y: 300.0 },
+            Shape::Square,
+            1,
+        );
+        world
+            .entity_mut(living_unit)
+            .insert(CollisionRadius(radius));
+
+        update_combat_movement(&mut world, 1.0 / 30.0);
+
+        // Dead tower should not have moved
+        let dead_pos = world.entity(dead_tower).get::<Position>().unwrap();
+        assert_eq!(
+            dead_pos.x, 100.0,
+            "Dead tower should not be moved by separation forces"
+        );
+        assert_eq!(
+            dead_pos.y, 300.0,
+            "Dead tower should not be moved by separation forces"
+        );
+
+        // Living unit should not be pushed by dead tower (dead tower excluded from physical_entities)
+        let live_pos = world.entity(living_unit).get::<Position>().unwrap();
+        assert_eq!(
+            live_pos.x, 105.0,
+            "Living unit should not be pushed by the dead tower"
+        );
+    }
+
+    #[test]
     fn combat_movement_ignores_workers() {
         let mut world = World::new();
 
@@ -1310,6 +1522,238 @@ mod tests {
         assert_eq!(
             final_unit2_pos.x, 590.0,
             "Unit should not be pushed by overlapping worker"
+        );
+    }
+
+    #[test]
+    fn dead_tower_revived_when_board_cleared() {
+        use crate::model::components::{Dead, Health, HomePosition, Mana};
+
+        let mut world = World::new();
+
+        let home_pos = Position { x: 100.0, y: 300.0 };
+        let dead_tower = world
+            .spawn((
+                Position {
+                    x: home_pos.x + 100.0,
+                    y: home_pos.y + 100.0,
+                },
+                HomePosition(home_pos),
+                Health {
+                    current: 0.0,
+                    max: 100.0,
+                },
+                Mana {
+                    current: 0.0,
+                    max: 50.0,
+                    regen: 1.0,
+                },
+                Dead,
+            ))
+            .id();
+
+        // No enemies on the left board
+        update_combat_reset(&mut world);
+
+        assert!(
+            world.entity(dead_tower).get::<Dead>().is_none(),
+            "Dead marker should be removed after wave clear"
+        );
+        let pos = world.entity(dead_tower).get::<Position>().unwrap();
+        assert_eq!(pos.x, home_pos.x, "Position x should be reset to home");
+        assert_eq!(pos.y, home_pos.y, "Position y should be reset to home");
+        let health = world.entity(dead_tower).get::<Health>().unwrap();
+        assert_eq!(
+            health.current, health.max,
+            "Health should be restored to max"
+        );
+        let mana = world.entity(dead_tower).get::<Mana>().unwrap();
+        assert_eq!(mana.current, mana.max, "Mana should be restored to max");
+    }
+
+    #[test]
+    fn dead_tower_not_revived_when_board_has_enemies() {
+        use crate::model::components::{Dead, Health, HomePosition};
+
+        let mut world = World::new();
+
+        // Dead tower on the left board
+        let home_pos = Position { x: 100.0, y: 300.0 };
+        let dead_tower = world
+            .spawn((
+                Position { x: 100.0, y: 300.0 },
+                HomePosition(home_pos),
+                Health {
+                    current: 0.0,
+                    max: 100.0,
+                },
+                Dead,
+            ))
+            .id();
+
+        // Enemy still on the left board
+        world.spawn((
+            Position { x: 200.0, y: 300.0 },
+            Enemy,
+            Health {
+                current: 50.0,
+                max: 100.0,
+            },
+        ));
+
+        update_combat_reset(&mut world);
+
+        assert!(
+            world.entity(dead_tower).get::<Dead>().is_some(),
+            "Dead marker should remain when board still has enemies"
+        );
+    }
+
+    #[test]
+    fn board_isolation_clearing_left_does_not_affect_right() {
+        use crate::model::components::{Dead, Health, HomePosition};
+        use crate::model::constants::RIGHT_BOARD_START;
+
+        let mut world = World::new();
+
+        // Dead tower on the left board
+        let left_home = Position { x: 100.0, y: 300.0 };
+        let left_dead_tower = world
+            .spawn((
+                Position {
+                    x: left_home.x + 100.0,
+                    y: left_home.y + 100.0,
+                },
+                HomePosition(left_home),
+                Health {
+                    current: 0.0,
+                    max: 100.0,
+                },
+                Dead,
+            ))
+            .id();
+
+        // Dead tower on the right board
+        let right_home = Position {
+            x: RIGHT_BOARD_START + 100.0,
+            y: 300.0,
+        };
+        let right_dead_tower = world
+            .spawn((
+                Position {
+                    x: right_home.x + 100.0,
+                    y: right_home.y + 100.0,
+                },
+                HomePosition(right_home),
+                Health {
+                    current: 0.0,
+                    max: 100.0,
+                },
+                Dead,
+            ))
+            .id();
+
+        // Enemy still on the right board (left board is clear)
+        world.spawn((
+            Position {
+                x: RIGHT_BOARD_START + 50.0,
+                y: 300.0,
+            },
+            Enemy,
+            Health {
+                current: 50.0,
+                max: 100.0,
+            },
+        ));
+
+        update_combat_reset(&mut world);
+
+        // Left board dead tower should be revived
+        assert!(
+            world.entity(left_dead_tower).get::<Dead>().is_none(),
+            "Left board dead tower should be revived when left board clears"
+        );
+        let left_pos = world.entity(left_dead_tower).get::<Position>().unwrap();
+        assert_eq!(
+            left_pos.x, left_home.x,
+            "Left board tower should be at home x"
+        );
+
+        // Right board dead tower should NOT be revived
+        assert!(
+            world.entity(right_dead_tower).get::<Dead>().is_some(),
+            "Right board dead tower should remain dead while right board has enemies"
+        );
+    }
+
+    #[test]
+    fn surviving_towers_restored_alongside_dead_towers() {
+        use crate::model::components::{Dead, Health, HomePosition};
+
+        let mut world = World::new();
+
+        // Dead tower on the left board
+        let dead_home = Position { x: 100.0, y: 200.0 };
+        let dead_tower = world
+            .spawn((
+                Position {
+                    x: dead_home.x + 50.0,
+                    y: dead_home.y + 50.0,
+                },
+                HomePosition(dead_home),
+                Health {
+                    current: 0.0,
+                    max: 100.0,
+                },
+                Dead,
+            ))
+            .id();
+
+        // Living tower with partial health on the same board
+        let alive_home = Position { x: 200.0, y: 300.0 };
+        let alive_tower = world
+            .spawn((
+                Position {
+                    x: alive_home.x + 100.0,
+                    y: alive_home.y + 100.0,
+                },
+                HomePosition(alive_home),
+                Health {
+                    current: 30.0,
+                    max: 100.0,
+                },
+            ))
+            .id();
+
+        // No enemies on the left board
+        update_combat_reset(&mut world);
+
+        // Dead tower revived
+        assert!(
+            world.entity(dead_tower).get::<Dead>().is_none(),
+            "Dead tower should be revived after wave clear"
+        );
+        let dead_health = world.entity(dead_tower).get::<Health>().unwrap();
+        assert_eq!(
+            dead_health.current, dead_health.max,
+            "Dead tower health should be fully restored"
+        );
+        let dead_pos = world.entity(dead_tower).get::<Position>().unwrap();
+        assert_eq!(
+            dead_pos.x, dead_home.x,
+            "Dead tower position should be reset to home"
+        );
+
+        // Alive tower also restored
+        let alive_health = world.entity(alive_tower).get::<Health>().unwrap();
+        assert_eq!(
+            alive_health.current, alive_health.max,
+            "Surviving tower health should also be restored"
+        );
+        let alive_pos = world.entity(alive_tower).get::<Position>().unwrap();
+        assert_eq!(
+            alive_pos.x, alive_home.x,
+            "Surviving tower position should also be reset to home"
         );
     }
 }

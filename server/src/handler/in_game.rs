@@ -2,6 +2,7 @@ use crate::{
     model::{
         components::{PlayerIdComponent, Position, TargetPositions},
         constants::SQUARE_SIZE,
+        game_state::GamePhase,
         messages::ClientMessage,
     },
     state::{ServerState, UpgradedWebSocket},
@@ -48,6 +49,10 @@ pub async fn in_game_loop(
                                 let lobby = &mut lobbies[lobby_id];
                                 match client_msg {
                                     ClientMessage::Place(p) => {
+                                        if lobby.game_state.phase != GamePhase::Build {
+                                            let _ = crate::routes::ws::send_message(ws_sender, crate::model::messages::ServerMessage::Error("Tower placement is only allowed during the build phase.".into())).await;
+                                            continue;
+                                        }
                                         let profile = crate::model::unit_config::get_unit_profile(p.shape);
                                         let player_idx = lobby.players.iter().position(|pl| pl.id == player_id);
 
@@ -157,7 +162,8 @@ pub async fn in_game_loop(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::components::ShapeComponent;
+    use crate::model::components::{ShapeComponent, Worker};
+    use crate::model::game_state::GamePhase;
     use crate::model::lobby::Lobby;
     use crate::model::messages::{PlaceMessage, SellMessage};
     use crate::model::player::Player;
@@ -367,6 +373,142 @@ mod tests {
             query.iter(&lobby.game_state.world).count(),
             0,
             "Entity should be despawned"
+        );
+    }
+
+    #[test]
+    fn place_rejected_during_combat_phase() {
+        let mut lobby = Lobby::new();
+        let player_id = 1;
+        lobby.players.push(Player {
+            id: player_id,
+            username: "p1".into(),
+            gold: 100,
+        });
+        lobby.game_state.phase = GamePhase::Combat;
+
+        let p = PlaceMessage {
+            shape: Shape::Square,
+            row: 1,
+            col: 1,
+        };
+
+        // Simulate Place handler WITH phase guard
+        if lobby.game_state.phase == GamePhase::Build {
+            let profile = crate::model::unit_config::get_unit_profile(p.shape);
+            let player_idx = lobby.players.iter().position(|pl| pl.id == player_id);
+            if let Some(idx) = player_idx {
+                if lobby.players[idx].try_spend_gold(profile.gold_cost) {
+                    let x = (p.col as f32 * SQUARE_SIZE) + (SQUARE_SIZE / 2.0);
+                    let y = (p.row as f32 * SQUARE_SIZE) + (SQUARE_SIZE / 2.0);
+                    crate::handler::spawn::spawn_unit(
+                        &mut lobby.game_state.world,
+                        Position { x, y },
+                        p.shape,
+                        player_id,
+                    );
+                }
+            }
+        }
+
+        assert_eq!(
+            lobby.players[0].gold, 100,
+            "Gold should NOT be deducted when placement is rejected during combat"
+        );
+        let mut query = lobby.game_state.world.query::<&ShapeComponent>();
+        assert_eq!(
+            query.iter(&lobby.game_state.world).count(),
+            0,
+            "No unit should be spawned when placement is rejected during combat"
+        );
+    }
+
+    #[test]
+    fn place_accepted_during_build_phase() {
+        let mut lobby = Lobby::new();
+        let player_id = 1;
+        lobby.players.push(Player {
+            id: player_id,
+            username: "p1".into(),
+            gold: 100,
+        });
+        // Default phase is Build
+
+        let p = PlaceMessage {
+            shape: Shape::Square,
+            row: 1,
+            col: 1,
+        };
+
+        // Simulate Place handler WITH phase guard
+        if lobby.game_state.phase == GamePhase::Build {
+            let profile = crate::model::unit_config::get_unit_profile(p.shape);
+            let player_idx = lobby.players.iter().position(|pl| pl.id == player_id);
+            if let Some(idx) = player_idx {
+                if lobby.players[idx].try_spend_gold(profile.gold_cost) {
+                    let x = (p.col as f32 * SQUARE_SIZE) + (SQUARE_SIZE / 2.0);
+                    let y = (p.row as f32 * SQUARE_SIZE) + (SQUARE_SIZE / 2.0);
+                    crate::handler::spawn::spawn_unit(
+                        &mut lobby.game_state.world,
+                        Position { x, y },
+                        p.shape,
+                        player_id,
+                    );
+                }
+            }
+        }
+
+        assert_eq!(
+            lobby.players[0].gold, 75,
+            "Gold should be deducted (100 - 25 = 75) when placement succeeds during build"
+        );
+        let mut query = lobby.game_state.world.query::<&ShapeComponent>();
+        assert_eq!(
+            query.iter(&lobby.game_state.world).count(),
+            1,
+            "Unit should be spawned during build phase"
+        );
+    }
+
+    #[test]
+    fn hire_worker_accepted_during_combat_phase() {
+        let mut lobby = Lobby::new();
+        let player_id = 1;
+        lobby.players.push(Player {
+            id: player_id,
+            username: "p1".into(),
+            gold: 100,
+        });
+        lobby.game_state.phase = GamePhase::Combat;
+
+        // Simulate HireWorker handler (no phase guard)
+        let player_idx = lobby.players.iter().position(|p| p.id == player_id);
+        if let Some(idx) = player_idx {
+            if lobby.players[idx].try_spend_gold(50) {
+                let targets = TargetPositions {
+                    vein: crate::handler::worker::VEIN_POSITIONS[idx],
+                    cart: crate::handler::worker::CART_POSITIONS[idx],
+                };
+                crate::handler::spawn::spawn_worker(
+                    &mut lobby.game_state.world,
+                    player_id,
+                    targets,
+                );
+            }
+        }
+
+        assert_eq!(
+            lobby.players[0].gold, 50,
+            "Gold should be deducted for worker hire during combat"
+        );
+        let mut query = lobby
+            .game_state
+            .world
+            .query_filtered::<&Worker, bevy_ecs::prelude::With<Worker>>();
+        assert_eq!(
+            query.iter(&lobby.game_state.world).count(),
+            1,
+            "Worker should be spawned during combat phase"
         );
     }
 }

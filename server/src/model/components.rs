@@ -30,6 +30,9 @@ pub struct Boss;
 #[derive(Component)]
 pub struct Worker;
 
+#[derive(Component)]
+pub struct Dead;
+
 #[derive(Component, Debug, Clone, Copy)]
 pub struct TargetPositions {
     pub vein: Position,
@@ -131,6 +134,11 @@ mod tests {
     fn physical_components_exist() {
         let _ = CollisionRadius(5.0);
         let _ = AttackRange(20.0);
+    }
+
+    #[test]
+    fn dead_marker_component_exists() {
+        let _ = Dead;
     }
 
     #[test]

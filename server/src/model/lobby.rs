@@ -1,7 +1,10 @@
-use super::components::{Enemy, Health, Mana, PlayerIdComponent, Position, ShapeComponent, Worker};
+use super::components::{
+    Dead, Enemy, Health, Mana, PlayerIdComponent, Position, ShapeComponent, Worker,
+};
 use super::game_state::GameState;
 use super::messages::{SerializableGameState, ServerMessage, Unit};
 use super::player::Player;
+use bevy_ecs::prelude::Without;
 use tokio::sync::broadcast;
 
 pub struct Lobby {
@@ -25,7 +28,7 @@ impl Lobby {
     }
 
     pub fn broadcast_gamestate(&mut self) {
-        let mut query = self.game_state.world.query::<(
+        let mut query = self.game_state.world.query_filtered::<(
             &Position,
             &ShapeComponent,
             Option<&PlayerIdComponent>,
@@ -33,7 +36,7 @@ impl Lobby {
             Option<&Health>,
             Option<&Worker>,
             Option<&Mana>,
-        )>();
+        ), Without<Dead>>();
 
         let units: Vec<Unit> = query
             .iter(&self.game_state.world)
@@ -77,6 +80,9 @@ impl Lobby {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::handler::spawn::spawn_unit;
+    use crate::model::components::{Dead, Position};
+    use crate::model::shape::Shape;
 
     #[test]
     fn broadcast_gamestate_after_receiver_is_dropped_does_not_panic() {
@@ -101,5 +107,95 @@ mod tests {
         let msg = rx.try_recv().unwrap();
         assert!(msg.contains("\"players\":"));
         assert!(msg.contains("\"gold\":100"));
+    }
+
+    #[test]
+    fn dead_tower_excluded_from_broadcast() {
+        let mut lobby = Lobby::new();
+
+        // Spawn one living tower and one dead tower on the world
+        let _living = spawn_unit(
+            &mut lobby.game_state.world,
+            Position { x: 100.0, y: 300.0 },
+            Shape::Square,
+            1,
+        );
+
+        let dead = spawn_unit(
+            &mut lobby.game_state.world,
+            Position { x: 200.0, y: 300.0 },
+            Shape::Square,
+            1,
+        );
+        lobby.game_state.world.entity_mut(dead).insert(Dead);
+
+        let mut rx = lobby.tx.subscribe();
+        lobby.broadcast_gamestate();
+
+        let msg = rx.try_recv().unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&msg).unwrap();
+        let units = parsed["data"]["units"].as_array().unwrap();
+
+        assert_eq!(
+            units.len(),
+            1,
+            "Only the living tower should appear in the broadcast"
+        );
+        let x = units[0]["x"].as_f64().unwrap();
+        assert!(
+            (x - 100.0).abs() < 0.01,
+            "The living tower (x=100) should be in the broadcast, not the dead one (x=200)"
+        );
+    }
+
+    #[test]
+    fn revived_tower_reappears_in_next_broadcast() {
+        let mut lobby = Lobby::new();
+
+        // Spawn a tower and mark it Dead
+        let tower = spawn_unit(
+            &mut lobby.game_state.world,
+            Position { x: 100.0, y: 300.0 },
+            Shape::Square,
+            1,
+        );
+        lobby.game_state.world.entity_mut(tower).insert(Dead);
+
+        // First broadcast: tower should be absent
+        let mut rx = lobby.tx.subscribe();
+        lobby.broadcast_gamestate();
+        let msg = rx.try_recv().unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&msg).unwrap();
+        let units = parsed["data"]["units"].as_array().unwrap();
+        assert_eq!(units.len(), 0, "Dead tower should not appear in broadcast");
+
+        // Revive the tower (remove Dead marker)
+        lobby.game_state.world.entity_mut(tower).remove::<Dead>();
+
+        // Second broadcast: tower should reappear at home position with full health
+        lobby.broadcast_gamestate();
+        let msg2 = rx.try_recv().unwrap();
+        let parsed2: serde_json::Value = serde_json::from_str(&msg2).unwrap();
+        let units2 = parsed2["data"]["units"].as_array().unwrap();
+        assert_eq!(
+            units2.len(),
+            1,
+            "Revived tower should reappear in the next broadcast"
+        );
+        let unit = &units2[0];
+        assert!(
+            (unit["x"].as_f64().unwrap() - 100.0).abs() < 0.01,
+            "Revived tower should be at its home x position"
+        );
+        assert!(
+            (unit["y"].as_f64().unwrap() - 300.0).abs() < 0.01,
+            "Revived tower should be at its home y position"
+        );
+        let current_hp = unit["current_hp"].as_f64().unwrap();
+        let max_hp = unit["max_hp"].as_f64().unwrap();
+        assert!(
+            (current_hp - max_hp).abs() < 0.01,
+            "Revived tower should have full health in the broadcast"
+        );
     }
 }
