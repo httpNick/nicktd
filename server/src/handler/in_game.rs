@@ -1,6 +1,9 @@
 use crate::{
     model::{
-        components::{PlayerIdComponent, Position, TargetPositions},
+        components::{
+            AttackRange, AttackStats, Boss, DefenseStats, PlayerIdComponent, Position,
+            ShapeComponent, TargetPositions, Worker,
+        },
         constants::SQUARE_SIZE,
         game_state::GamePhase,
         messages::ClientMessage,
@@ -83,43 +86,6 @@ pub async fn in_game_loop(
                                             }
                                         }
                                     }
-                                    ClientMessage::Sell(s) => {
-                                        let player_idx = lobby.players.iter().position(|pl| pl.id == player_id);
-                                        let mut sell_data: Option<(Entity, crate::model::shape::Shape)> = None;
-
-                                        if let Some(idx) = player_idx {
-                                            if s.row >= 10 || s.col >= 10 { continue; }
-
-                                            let x_min = if idx == 0 {
-                                                s.col as f32 * SQUARE_SIZE
-                                            } else {
-                                                crate::model::constants::RIGHT_BOARD_START + (s.col as f32 * SQUARE_SIZE)
-                                            };
-                                            let x_max = x_min + SQUARE_SIZE;
-                                            let y_min = s.row as f32 * SQUARE_SIZE;
-                                            let y_max = y_min + SQUARE_SIZE;
-
-                                            let mut query = lobby.game_state.world.query::<(Entity, &Position, &PlayerIdComponent, &crate::model::components::ShapeComponent)>();
-                                            for (entity, position, owner, shape) in query.iter(&lobby.game_state.world) {
-                                                if position.x >= x_min && position.x < x_max && position.y >= y_min && position.y < y_max && owner.0 == player_id {
-                                                    sell_data = Some((entity, shape.0));
-                                                    break;
-                                                }
-                                            }
-
-                                            if let Some((entity, shape)) = sell_data {
-                                                let profile = crate::model::unit_config::get_unit_profile(shape);
-                                                let refund = (profile.gold_cost as f32 * 0.75) as u32;
-
-                                                if let Some(player) = lobby.players.iter_mut().find(|p| p.id == player_id) {
-                                                    player.add_gold(refund);
-                                                }
-
-                                                lobby.game_state.world.despawn(entity);
-                                                lobby.broadcast_gamestate();
-                                            }
-                                        }
-                                    }
                                     ClientMessage::SkipToCombat => {
                                         lobby.game_state.phase_timer = 0.0;
                                     }
@@ -144,6 +110,75 @@ pub async fn in_game_loop(
                                         }
                                     }
                                     ClientMessage::LeaveLobby => break InGameLoopResult::PlayerLeft,
+                                    ClientMessage::SellById { entity_id } => {
+                                        if lobby.game_state.phase != GamePhase::Build {
+                                            let _ = crate::routes::ws::send_message(ws_sender, crate::model::messages::ServerMessage::Error("Tower selling is only allowed during the build phase.".into())).await;
+                                            continue;
+                                        }
+
+                                        let mut query = lobby.game_state.world.query::<(Entity, &PlayerIdComponent, &ShapeComponent)>();
+                                        let found = query
+                                            .iter(&lobby.game_state.world)
+                                            .find(|(e, owner, _)| e.index() == entity_id && owner.0 == player_id)
+                                            .map(|(entity, _, shape)| (entity, shape.0));
+
+                                        if let Some((entity, shape)) = found {
+                                            let profile = crate::model::unit_config::get_unit_profile(shape);
+                                            let refund = (profile.gold_cost as f32 * 0.75) as u32;
+                                            if let Some(player) = lobby.players.iter_mut().find(|p| p.id == player_id) {
+                                                player.gold += refund;
+                                            }
+                                            lobby.game_state.world.despawn(entity);
+                                            lobby.broadcast_gamestate();
+                                        }
+                                    }
+                                    ClientMessage::RequestUnitInfo { entity_id } => {
+                                        let mut query = lobby.game_state.world.query::<(
+                                            Entity,
+                                            Option<&AttackStats>,
+                                            Option<&AttackRange>,
+                                            Option<&DefenseStats>,
+                                            Option<&ShapeComponent>,
+                                            Option<&Boss>,
+                                            Option<&PlayerIdComponent>,
+                                            Option<&Worker>,
+                                        )>();
+                                        let found = query
+                                            .iter(&lobby.game_state.world)
+                                            .find(|(entity, ..)| entity.index() == entity_id)
+                                            .map(|(_, attack_stats, attack_range, defense_stats, shape_comp, boss, owner, worker)| (
+                                                attack_stats.map(|s| s.damage),
+                                                attack_stats.map(|s| s.rate),
+                                                attack_stats.map(|s| s.damage_type),
+                                                attack_range.map(|r| r.0),
+                                                defense_stats.map(|d| d.armor),
+                                                shape_comp.map(|s| s.0),
+                                                boss.is_some(),
+                                                owner.map(|o| o.0),
+                                                worker.is_some(),
+                                            ));
+
+                                        if let Some((attack_damage, attack_rate, damage_type, attack_range, armor, shape, is_boss, owner_id, is_worker)) = found {
+                                            let sell_value = match (owner_id, shape, is_worker) {
+                                                (Some(oid), Some(sh), false) if oid == player_id => {
+                                                    let profile = crate::model::unit_config::get_unit_profile(sh);
+                                                    Some((profile.gold_cost as f32 * 0.75) as u32)
+                                                }
+                                                _ => None,
+                                            };
+                                            let info = crate::model::messages::UnitInfoData {
+                                                entity_id,
+                                                attack_damage,
+                                                attack_rate,
+                                                attack_range,
+                                                damage_type,
+                                                armor,
+                                                is_boss,
+                                                sell_value,
+                                            };
+                                            let _ = crate::routes::ws::send_message(ws_sender, crate::model::messages::ServerMessage::UnitInfo(info)).await;
+                                        }
+                                    }
                                     _ => {}
                                 }
                             }
@@ -162,10 +197,11 @@ pub async fn in_game_loop(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::handler::spawn::spawn_unit;
     use crate::model::components::{ShapeComponent, Worker};
     use crate::model::game_state::GamePhase;
     use crate::model::lobby::Lobby;
-    use crate::model::messages::{PlaceMessage, SellMessage};
+    use crate::model::messages::PlaceMessage;
     use crate::model::player::Player;
     use crate::model::shape::Shape;
 
@@ -306,77 +342,6 @@ mod tests {
     }
 
     #[test]
-    fn test_unit_selling_refunds_gold() {
-        let mut lobby = Lobby::new();
-        let player_id = 1;
-        lobby.players.push(Player {
-            id: player_id,
-            username: "p1".into(),
-            gold: 0,
-        });
-
-        // Manually spawn a Square (cost 25)
-        let x = SQUARE_SIZE / 2.0;
-        let y = SQUARE_SIZE / 2.0;
-        let _ = crate::handler::spawn::spawn_unit(
-            &mut lobby.game_state.world,
-            Position { x, y },
-            Shape::Square,
-            player_id,
-        );
-
-        let s = SellMessage { row: 0, col: 0 };
-
-        // --- SIMULATED logic ---
-        let mut sell_data = None;
-        let x_min = s.col as f32 * SQUARE_SIZE;
-        let x_max = x_min + SQUARE_SIZE;
-        let y_min = s.row as f32 * SQUARE_SIZE;
-        let y_max = y_min + SQUARE_SIZE;
-
-        let mut query =
-            lobby
-                .game_state
-                .world
-                .query::<(Entity, &Position, &PlayerIdComponent, &ShapeComponent)>();
-        for (e, position, owner, shape) in query.iter(&lobby.game_state.world) {
-            if position.x >= x_min
-                && position.x < x_max
-                && position.y >= y_min
-                && position.y < y_max
-                && owner.0 == player_id
-            {
-                sell_data = Some((e, shape.0));
-                break;
-            }
-        }
-
-        if let Some((e, shape)) = sell_data {
-            let profile = crate::model::unit_config::get_unit_profile(shape);
-            let refund = (profile.gold_cost as f32 * 0.75) as u32; // 25 * 0.75 = 18.75 -> 18
-            let player = lobby
-                .players
-                .iter_mut()
-                .find(|p| p.id == player_id)
-                .unwrap();
-            player.add_gold(refund);
-            lobby.game_state.world.despawn(e);
-        }
-        // --- END SIMULATED logic ---
-
-        assert_eq!(
-            lobby.players[0].gold, 18,
-            "Refund for Square (25g) should be 18g (75%)"
-        );
-        let mut query = lobby.game_state.world.query::<&ShapeComponent>();
-        assert_eq!(
-            query.iter(&lobby.game_state.world).count(),
-            0,
-            "Entity should be despawned"
-        );
-    }
-
-    #[test]
     fn place_rejected_during_combat_phase() {
         let mut lobby = Lobby::new();
         let player_id = 1;
@@ -467,6 +432,364 @@ mod tests {
             query.iter(&lobby.game_state.world).count(),
             1,
             "Unit should be spawned during build phase"
+        );
+    }
+
+    // --- SellById tests ---
+
+    #[test]
+    fn test_sell_by_id_refunds_gold_in_build_phase() {
+        use crate::model::unit_config::get_unit_profile;
+
+        let mut lobby = Lobby::new();
+        let player_id: i64 = 1;
+        lobby.players.push(Player {
+            id: player_id,
+            username: "p1".into(),
+            gold: 100,
+        });
+
+        let entity = spawn_unit(
+            &mut lobby.game_state.world,
+            Position { x: 100.0, y: 100.0 },
+            Shape::Square,
+            player_id,
+        );
+        let entity_id = entity.index();
+
+        assert_eq!(lobby.game_state.phase, GamePhase::Build);
+
+        // Simulate SellById handler
+        if lobby.game_state.phase == GamePhase::Build {
+            let mut query = lobby
+                .game_state
+                .world
+                .query::<(Entity, &PlayerIdComponent, &ShapeComponent)>();
+            let found = query
+                .iter(&lobby.game_state.world)
+                .find(|(e, owner, _)| e.index() == entity_id && owner.0 == player_id)
+                .map(|(entity, _, shape)| (entity, shape.0));
+
+            if let Some((entity, shape)) = found {
+                let profile = get_unit_profile(shape);
+                let refund = (profile.gold_cost as f32 * 0.75) as u32;
+                if let Some(player) = lobby.players.iter_mut().find(|p| p.id == player_id) {
+                    player.gold += refund;
+                }
+                lobby.game_state.world.despawn(entity);
+            }
+        }
+
+        // Square costs 25; 25 * 0.75 = 18 (truncated)
+        assert_eq!(
+            lobby.players[0].gold, 118,
+            "Gold should be refunded 18 (75% of 25)"
+        );
+        let mut check = lobby.game_state.world.query::<&ShapeComponent>();
+        assert_eq!(
+            check.iter(&lobby.game_state.world).count(),
+            0,
+            "Entity should be despawned"
+        );
+    }
+
+    #[test]
+    fn test_sell_by_id_rejected_in_combat_phase() {
+        let mut lobby = Lobby::new();
+        let player_id: i64 = 1;
+        lobby.players.push(Player {
+            id: player_id,
+            username: "p1".into(),
+            gold: 100,
+        });
+        lobby.game_state.phase = GamePhase::Combat;
+
+        let entity = spawn_unit(
+            &mut lobby.game_state.world,
+            Position { x: 100.0, y: 100.0 },
+            Shape::Square,
+            player_id,
+        );
+        let entity_id = entity.index();
+
+        // Simulate SellById handler with phase guard
+        if lobby.game_state.phase == GamePhase::Build {
+            let mut query = lobby
+                .game_state
+                .world
+                .query::<(Entity, &PlayerIdComponent, &ShapeComponent)>();
+            let found = query
+                .iter(&lobby.game_state.world)
+                .find(|(e, owner, _)| e.index() == entity_id && owner.0 == player_id)
+                .map(|(entity, _, shape)| (entity, shape.0));
+
+            if let Some((entity, _shape)) = found {
+                lobby.game_state.world.despawn(entity);
+                lobby.players[0].gold += 18;
+            }
+        }
+
+        assert_eq!(
+            lobby.players[0].gold, 100,
+            "Gold should not change in combat phase"
+        );
+        let mut check = lobby.game_state.world.query::<&ShapeComponent>();
+        assert_eq!(
+            check.iter(&lobby.game_state.world).count(),
+            1,
+            "Entity should still exist"
+        );
+    }
+
+    #[test]
+    fn test_sell_by_id_rejected_for_wrong_owner() {
+        let mut lobby = Lobby::new();
+        let player_1_id: i64 = 1;
+        let player_2_id: i64 = 2;
+        lobby.players.push(Player {
+            id: player_1_id,
+            username: "p1".into(),
+            gold: 100,
+        });
+        lobby.players.push(Player {
+            id: player_2_id,
+            username: "p2".into(),
+            gold: 100,
+        });
+
+        let entity = spawn_unit(
+            &mut lobby.game_state.world,
+            Position { x: 100.0, y: 100.0 },
+            Shape::Square,
+            player_1_id,
+        );
+        let entity_id = entity.index();
+
+        // Player 2 attempts to sell player 1's tower
+        let mut query = lobby
+            .game_state
+            .world
+            .query::<(Entity, &PlayerIdComponent, &ShapeComponent)>();
+        let found = query
+            .iter(&lobby.game_state.world)
+            .find(|(e, owner, _)| e.index() == entity_id && owner.0 == player_2_id)
+            .map(|(entity, _, shape)| (entity, shape.0));
+
+        assert!(
+            found.is_none(),
+            "Query should not match a tower owned by a different player"
+        );
+        let mut check = lobby.game_state.world.query::<&ShapeComponent>();
+        assert_eq!(
+            check.iter(&lobby.game_state.world).count(),
+            1,
+            "Entity should not be despawned"
+        );
+    }
+
+    // --- RequestUnitInfo tests ---
+
+    #[test]
+    fn test_request_unit_info_returns_tower_stats() {
+        use crate::model::components::{AttackRange, AttackStats, Boss, DefenseStats, Worker};
+        use crate::model::unit_config::get_unit_profile;
+
+        let mut lobby = Lobby::new();
+        let player_id: i64 = 1;
+        lobby.players.push(Player {
+            id: player_id,
+            username: "p1".into(),
+            gold: 100,
+        });
+
+        let entity = spawn_unit(
+            &mut lobby.game_state.world,
+            Position { x: 100.0, y: 100.0 },
+            Shape::Circle,
+            player_id,
+        );
+        let entity_id = entity.index();
+
+        let mut query = lobby.game_state.world.query::<(
+            Entity,
+            Option<&AttackStats>,
+            Option<&AttackRange>,
+            Option<&DefenseStats>,
+            Option<&ShapeComponent>,
+            Option<&Boss>,
+            Option<&PlayerIdComponent>,
+            Option<&Worker>,
+        )>();
+        let found = query
+            .iter(&lobby.game_state.world)
+            .find(|(e, ..)| e.index() == entity_id)
+            .map(
+                |(
+                    _,
+                    attack_stats,
+                    attack_range,
+                    defense_stats,
+                    shape_comp,
+                    boss,
+                    owner,
+                    worker,
+                )| {
+                    (
+                        attack_stats.map(|s| (s.damage, s.rate, s.damage_type)),
+                        attack_range.map(|r| r.0),
+                        defense_stats.map(|d| d.armor),
+                        shape_comp.map(|s| s.0),
+                        boss.is_some(),
+                        owner.map(|o| o.0),
+                        worker.is_some(),
+                    )
+                },
+            );
+
+        assert!(found.is_some(), "Entity should be found");
+        let (attack_data, range, _armor, shape, is_boss, owner_id, is_worker) = found.unwrap();
+
+        let profile = get_unit_profile(Shape::Circle);
+        assert_eq!(shape, Some(Shape::Circle));
+        assert!(!is_boss);
+        assert_eq!(owner_id, Some(player_id));
+        assert!(!is_worker);
+
+        let (damage, rate, damage_type) = attack_data.unwrap();
+        assert_eq!(damage, profile.combat.primary.damage);
+        assert_eq!(rate, profile.combat.primary.rate);
+        assert_eq!(damage_type, profile.combat.primary.damage_type);
+        assert_eq!(range, Some(profile.combat.primary.range));
+
+        // sell_value: Circle costs 75, 75 * 0.75 = 56
+        let sell_value = match (owner_id, shape, is_worker) {
+            (Some(oid), Some(sh), false) if oid == player_id => {
+                Some((get_unit_profile(sh).gold_cost as f32 * 0.75) as u32)
+            }
+            _ => None,
+        };
+        assert_eq!(sell_value, Some(56));
+    }
+
+    #[test]
+    fn test_request_unit_info_returns_none_for_unknown_entity() {
+        use crate::model::components::{AttackRange, AttackStats, Boss, DefenseStats, Worker};
+
+        let mut lobby = Lobby::new();
+        let entity_id: u32 = 9999;
+
+        let mut query = lobby.game_state.world.query::<(
+            Entity,
+            Option<&AttackStats>,
+            Option<&AttackRange>,
+            Option<&DefenseStats>,
+            Option<&ShapeComponent>,
+            Option<&Boss>,
+            Option<&PlayerIdComponent>,
+            Option<&Worker>,
+        )>();
+        let found = query
+            .iter(&lobby.game_state.world)
+            .find(|(e, ..)| e.index() == entity_id)
+            .map(
+                |(
+                    _,
+                    attack_stats,
+                    attack_range,
+                    defense_stats,
+                    shape_comp,
+                    boss,
+                    owner,
+                    worker,
+                )| {
+                    (
+                        attack_stats.map(|s| (s.damage, s.rate, s.damage_type)),
+                        attack_range.map(|r| r.0),
+                        defense_stats.map(|d| d.armor),
+                        shape_comp.map(|s| s.0),
+                        boss.is_some(),
+                        owner.map(|o| o.0),
+                        worker.is_some(),
+                    )
+                },
+            );
+
+        assert!(
+            found.is_none(),
+            "No entity should be found for unknown entity_id"
+        );
+    }
+
+    #[test]
+    fn test_sell_value_is_none_for_wrong_owner() {
+        use crate::model::components::{AttackRange, AttackStats, Boss, DefenseStats, Worker};
+        use crate::model::unit_config::get_unit_profile;
+
+        let mut lobby = Lobby::new();
+        let owner_id: i64 = 1;
+        let requester_id: i64 = 2;
+        lobby.players.push(Player {
+            id: owner_id,
+            username: "p1".into(),
+            gold: 100,
+        });
+
+        let entity = spawn_unit(
+            &mut lobby.game_state.world,
+            Position { x: 100.0, y: 100.0 },
+            Shape::Square,
+            owner_id,
+        );
+        let entity_id = entity.index();
+
+        let mut query = lobby.game_state.world.query::<(
+            Entity,
+            Option<&AttackStats>,
+            Option<&AttackRange>,
+            Option<&DefenseStats>,
+            Option<&ShapeComponent>,
+            Option<&Boss>,
+            Option<&PlayerIdComponent>,
+            Option<&Worker>,
+        )>();
+        let found = query
+            .iter(&lobby.game_state.world)
+            .find(|(e, ..)| e.index() == entity_id)
+            .map(
+                |(
+                    _,
+                    attack_stats,
+                    attack_range,
+                    defense_stats,
+                    shape_comp,
+                    boss,
+                    owner,
+                    worker,
+                )| {
+                    (
+                        attack_stats.map(|s| (s.damage, s.rate, s.damage_type)),
+                        attack_range.map(|r| r.0),
+                        defense_stats.map(|d| d.armor),
+                        shape_comp.map(|s| s.0),
+                        boss.is_some(),
+                        owner.map(|o| o.0),
+                        worker.is_some(),
+                    )
+                },
+            );
+
+        assert!(found.is_some());
+        let (_, _, _, shape, _, pic_owner_id, is_worker) = found.unwrap();
+
+        let sell_value = match (pic_owner_id, shape, is_worker) {
+            (Some(oid), Some(sh), false) if oid == requester_id => {
+                Some((get_unit_profile(sh).gold_cost as f32 * 0.75) as u32)
+            }
+            _ => None,
+        };
+        assert_eq!(
+            sell_value, None,
+            "sell_value should be None when requester does not own the entity"
         );
     }
 

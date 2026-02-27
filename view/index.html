@@ -11,10 +11,36 @@
         .container { margin-top: 50px; }
         #auth-view { max-width: 500px; }
         #lobby-selection, #game-view { display: none; /* Hidden by default */ }
+        #game-view { flex-direction: column; align-items: flex-start; }
         #lobby-selection h2 { text-align: center; }
         .lobby-card { margin-bottom: 20px; }
         canvas { border: 2px solid #fff; }
-        #ui-panel { position: absolute; bottom: 20px, right: 20px; background-color: rgba(0, 0, 0, 0.7); border: 2px solid #888; padding: 10px; display: none; }
+        #ui-panel {
+            background-color: rgba(0, 0, 0, 0.7);
+            border: 2px solid #888;
+            padding: 10px;
+            flex-direction: row;
+            gap: 10px;
+            align-items: flex-start;
+            margin-top: 8px;
+            width: 700px;
+            box-sizing: border-box;
+        }
+        .panel-portrait canvas { border: 1px solid #aaa; display: block; }
+        .panel-info { flex: 1; display: flex; flex-direction: column; gap: 4px; }
+        .panel-name { font-size: 1.1em; font-weight: bold; margin-bottom: 4px; }
+        .bar-row { display: flex; align-items: center; gap: 6px; }
+        .bar-label { width: 22px; font-size: 0.85em; color: #ccc; }
+        .bar-track { flex: 1; height: 12px; background: #444; border-radius: 3px; overflow: hidden; }
+        .bar-fill { height: 100%; width: 100%; transition: width 0.1s; }
+        .hp-fill { background: #2e8b57; }
+        .mana-fill { background: #4169e1; }
+        .bar-numeric { width: 70px; font-size: 0.8em; text-align: right; }
+        .worker-state { font-size: 0.85em; color: #ccc; }
+        .panel-stats { min-width: 140px; display: flex; flex-direction: column; gap: 3px; }
+        .stat-row { display: flex; justify-content: space-between; gap: 8px; font-size: 0.85em; }
+        .boss-row { color: #ff6600; font-weight: bold; }
+        .panel-abilities { min-width: 90px; display: flex; flex-direction: column; gap: 6px; align-items: flex-start; }
     </style>
 </head>
 <body>
@@ -76,8 +102,48 @@
         </div>
         <canvas id="gameCanvas" width="1400" height="600"></canvas>
         <div id="ui-panel">
-            <h3 id="tower-type"></h3>
-            <button id="sell-button">Sell</button>
+            <!-- Portrait section -->
+            <div class="panel-portrait">
+                <canvas data-panel="portrait" width="80" height="80"></canvas>
+            </div>
+
+            <!-- Info section: name, HP bar, mana bar, worker state -->
+            <div class="panel-info">
+                <div data-panel="name" class="panel-name"></div>
+
+                <!-- HP row -->
+                <div class="bar-row">
+                    <span class="bar-label">HP</span>
+                    <div class="bar-track">
+                        <div data-panel="hp-fill" class="bar-fill hp-fill"></div>
+                    </div>
+                    <span data-panel="hp-label" class="bar-numeric"></span>
+                </div>
+
+                <!-- Mana row (hidden when unit has no mana) -->
+                <div data-panel="mana-row" class="bar-row" style="display: none">
+                    <span class="bar-label">MP</span>
+                    <div class="bar-track">
+                        <div data-panel="mana-fill" class="bar-fill mana-fill"></div>
+                    </div>
+                    <span data-panel="mana-label" class="bar-numeric"></span>
+                </div>
+
+                <!-- Worker state (hidden for non-workers) -->
+                <div data-panel="worker-state-row" class="worker-state" style="display: none">
+                    State: <span data-panel="worker-state-label"></span>
+                </div>
+            </div>
+
+            <!-- Stats section (populated dynamically by applyStaticInfo) -->
+            <div data-panel="stats" class="panel-stats"></div>
+
+            <!-- Ability grid section -->
+            <div class="panel-abilities">
+                <button data-panel="sell-btn" class="btn btn-small waves-effect waves-light" style="display: none">
+                    Sell (<span data-panel="sell-value"></span>)
+                </button>
+            </div>
         </div>
     </div>
 

@@ -1,7 +1,9 @@
 import { AnimationManager, DamageType, Position } from './animations';
+import { UnitInfoPanel } from './unit_info_panel';
 
 // --- TYPES & INTERFACES ---
 interface Unit {
+    id: number;
     shape: 'Square' | 'Circle' | 'Triangle';
     x: number;
     y: number;
@@ -12,7 +14,28 @@ interface Unit {
     is_worker: boolean;
     current_mana?: number;
     max_mana?: number;
+    worker_state?: 'MovingToVein' | 'Mining' | 'MovingToCart';
 }
+
+interface UnitStaticInfo {
+    entity_id: number;
+    attack_damage: number | null;
+    attack_rate: number | null;
+    attack_range: number | null;
+    damage_type: 'PhysicalBasic' | 'PhysicalPierce' | 'FireMagical' | null;
+    armor: number | null;
+    is_boss: boolean;
+    sell_value: number | null;
+}
+
+type ClientMessagePayload =
+    | { action: 'joinLobby'; payload: number }
+    | { action: 'place'; payload: { shape: string; row: number; col: number } }
+    | { action: 'sellById'; payload: { entity_id: number } }
+    | { action: 'skipToCombat' }
+    | { action: 'leaveLobby' }
+    | { action: 'hireWorker'; payload: Record<string, never> }
+    | { action: 'requestUnitInfo'; payload: { entity_id: number } };
 
 interface Player {
     id: number;
@@ -40,7 +63,8 @@ type ServerMessage =
     | { type: 'GameState'; data: GameState }
     | { type: 'CombatEvents'; data: CombatEvent[] }
     | { type: 'PlayerId'; data: number }
-    | { type: 'Error'; data: string };
+    | { type: 'Error'; data: string }
+    | { type: 'UnitInfo'; data: UnitStaticInfo };
 
 // Views
 const authView = document.getElementById('auth-view') as HTMLDivElement;
@@ -59,9 +83,6 @@ const lobbyList = document.getElementById('lobby-list') as HTMLDivElement;
 const canvas = document.getElementById('gameCanvas') as HTMLCanvasElement;
 const ctx = canvas.getContext('2d')!;
 const leaveLobbyButton = document.getElementById('leave-lobby') as HTMLButtonElement;
-const uiPanel = document.getElementById('ui-panel') as HTMLDivElement;
-const towerTypeEl = document.getElementById('tower-type') as HTMLHeadingElement;
-const sellButton = document.getElementById('sell-button') as HTMLButtonElement;
 const gamePhaseEl = document.getElementById('game-phase') as HTMLSpanElement;
 const gameTimerEl = document.getElementById('game-timer') as HTMLSpanElement;
 const goldDisplay = document.getElementById('gold-display') as HTMLSpanElement;
@@ -76,7 +97,6 @@ const RIGHT_BOARD_START = 800;
 let selectedShape: 'Square' | 'Circle' | 'Triangle' = 'Square';
 let gameState: Unit[] = [];
 let currentPlayers: Player[] = [];
-let selectedTower: Unit | null = null;
 let myPlayerId: number | null = null;
 let socket: WebSocket | null = null;
 let isInGame = false;
@@ -84,6 +104,17 @@ let gamePhase = '';
 let gameTimer = 0;
 
 const animationManager = new AnimationManager();
+
+const panel = new UnitInfoPanel(
+    document.getElementById('ui-panel') as HTMLElement,
+    {
+        onSell: (entityId: number) => {
+            if (socket && socket.readyState === WebSocket.OPEN) {
+                socket.send(JSON.stringify({ action: 'sellById', payload: { entity_id: entityId } }));
+            }
+        },
+    }
+);
 
 const API_BASE_URL = 'http://127.0.0.1:9001';
 
@@ -195,6 +226,9 @@ function connectAndShowLobby() {
             case 'Error':
                 // @ts-ignore
                 M.toast({ html: serverMsg.data });
+                break;
+            case 'UnitInfo':
+                panel.applyStaticInfo(serverMsg.data);
                 break;
         }
     };
@@ -340,18 +374,29 @@ function drawUnits(units: Unit[]) {
     });
 }
 
+function applyPanelBoardSide(): void {
+    if (myPlayerId === null) return;
+    const idx = currentPlayers.findIndex(p => p.id === myPlayerId);
+    if (idx === -1) return;
+    const uiPanel = document.getElementById('ui-panel') as HTMLElement;
+    uiPanel.style.marginLeft = idx === 0 ? '0px' : '700px';
+}
+
 function updateGameState(newState: GameState) {
     gameState = newState.units;
     if (newState.players) {
         currentPlayers = newState.players;
         const me = newState.players.find(p => p.id === myPlayerId);
         if (me) goldDisplay.textContent = me.gold.toString();
+        applyPanelBoardSide();
     }
     gamePhase = newState.phase;
     gameTimer = Math.max(0, newState.phase_timer);
 
     gamePhaseEl.textContent = gamePhase;
     gameTimerEl.textContent = gameTimer.toFixed(1);
+
+    panel.syncDynamicState(gameState, gamePhase);
 }
 
 function handleCombatEvents(events: CombatEvent[]) {
@@ -377,7 +422,6 @@ function render() {
         drawWorkerArea();
         drawUnits(gameState);
 
-        const now = Date.now();
         animationManager.update();
         animationManager.draw(ctx);
     }
@@ -385,19 +429,6 @@ function render() {
 }
 
 requestAnimationFrame(render);
-
-function showUiPanel(tower: Unit) {
-    if (tower.is_enemy) return;
-    selectedTower = tower;
-    towerTypeEl.textContent = tower.shape;
-    sellButton.disabled = tower.owner_id !== myPlayerId;
-    uiPanel.style.display = 'block';
-}
-
-function hideUiPanel() {
-    selectedTower = null;
-    uiPanel.style.display = 'none';
-}
 
 // --- ONE-TIME EVENT REGISTRATION ---
 document.getElementById('selectSquare')!.onclick = () => { selectedShape = 'Square'; };
@@ -430,43 +461,37 @@ canvas.addEventListener('click', function (event) {
         localX = clickX - RIGHT_BOARD_START;
     }
 
-    if (boardIdx === null) return;
+    if (boardIdx === null) {
+        panel.clearSelection();
+        return;
+    }
 
-    const towerSize = SQUARE_SIZE - 20;
-    const clickedTower = gameState.find(s => {
-        return !s.is_enemy && clickX >= s.x - towerSize / 2 && clickX <= s.x + towerSize / 2 &&
-            clickY >= s.y - towerSize / 2 && clickY <= s.y + towerSize / 2;
+    const unitHitSize = SQUARE_SIZE - 20;
+    const clickedUnit = gameState.find(s => {
+        return clickX >= s.x - unitHitSize / 2 && clickX <= s.x + unitHitSize / 2 &&
+            clickY >= s.y - unitHitSize / 2 && clickY <= s.y + unitHitSize / 2;
     });
 
-    if (clickedTower) {
-        showUiPanel(clickedTower);
+    if (clickedUnit) {
+        panel.selectUnit(clickedUnit, myPlayerId!, gamePhase);
+        if (!panel.staticInfoCache.has(clickedUnit.id)) {
+            if (socket && socket.readyState === WebSocket.OPEN) {
+                socket.send(JSON.stringify({ action: 'requestUnitInfo', payload: { entity_id: clickedUnit.id } }));
+            }
+        }
     } else {
-        hideUiPanel();
+        panel.clearSelection();
         const row = Math.floor(clickY / SQUARE_SIZE);
-        const col = Math.floor(localX / SQUARE_SIZE); // Use localX which is relative to board start
+        const col = Math.floor(localX / SQUARE_SIZE);
         const placeMessage = { action: 'place', payload: { shape: selectedShape, row, col } };
         if (socket && socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify(placeMessage));
-    }
-});
-
-sellButton.addEventListener('click', function () {
-    if (selectedTower && selectedTower.owner_id === myPlayerId) {
-        let localX = selectedTower.x;
-        if (selectedTower.x >= RIGHT_BOARD_START) {
-            localX -= RIGHT_BOARD_START;
-        }
-        const row = Math.floor(selectedTower.y / SQUARE_SIZE);
-        const col = Math.floor(localX / SQUARE_SIZE);
-        const sellMessage = { action: 'sell', payload: { row, col } };
-        if (socket && socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify(sellMessage));
-        hideUiPanel();
     }
 });
 
 leaveLobbyButton.onclick = () => {
     isInGame = false;
     socket?.send(JSON.stringify({ action: 'leaveLobby' }));
-    hideUiPanel();
+    panel.clearSelection();
     showLobbyView();
 };
 

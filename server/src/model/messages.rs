@@ -21,20 +21,15 @@ pub struct PlaceMessage {
 }
 
 #[derive(Serialize, Deserialize, Debug)]
-pub struct SellMessage {
-    pub row: u32,
-    pub col: u32,
-}
-
-#[derive(Serialize, Deserialize, Debug)]
 #[serde(tag = "action", content = "payload", rename_all = "camelCase")]
 pub enum ClientMessage {
     JoinLobby(usize),
     Place(PlaceMessage),
-    Sell(SellMessage),
+    SellById { entity_id: u32 },
     SkipToCombat,
     LeaveLobby,
     HireWorker {},
+    RequestUnitInfo { entity_id: u32 },
 }
 
 #[derive(Serialize, Clone, Debug)]
@@ -45,6 +40,7 @@ pub struct LobbyInfo {
 
 #[derive(Serialize, Clone, Debug)]
 pub struct Unit {
+    pub id: u32,
     pub shape: Shape,
     pub x: f32,
     pub y: f32,
@@ -55,6 +51,19 @@ pub struct Unit {
     pub is_worker: bool,
     pub current_mana: Option<f32>,
     pub max_mana: Option<f32>,
+    pub worker_state: Option<String>,
+}
+
+#[derive(Serialize, Clone, Debug)]
+pub struct UnitInfoData {
+    pub entity_id: u32,
+    pub attack_damage: Option<f32>,
+    pub attack_rate: Option<f32>,
+    pub attack_range: Option<f32>,
+    pub damage_type: Option<DamageType>,
+    pub armor: Option<f32>,
+    pub is_boss: bool,
+    pub sell_value: Option<u32>,
 }
 
 #[derive(Serialize, Clone, Debug)]
@@ -73,6 +82,7 @@ pub enum ServerMessage {
     CombatEvents(Vec<CombatEvent>),
     PlayerId(i64),
     Error(String),
+    UnitInfo(UnitInfoData),
 }
 
 #[cfg(test)]
@@ -92,6 +102,7 @@ mod tests {
     #[test]
     fn unit_serialization_includes_mana() {
         let unit = Unit {
+            id: 7,
             shape: Shape::Circle,
             x: 100.0,
             y: 100.0,
@@ -102,11 +113,59 @@ mod tests {
             is_worker: false,
             current_mana: Some(50.0),
             max_mana: Some(100.0),
+            worker_state: None,
         };
 
         let json = serde_json::to_string(&unit).unwrap();
+        assert!(json.contains("\"id\":7"));
         assert!(json.contains("\"current_mana\":50.0"));
         assert!(json.contains("\"max_mana\":100.0"));
+    }
+
+    #[test]
+    fn unit_serialization_includes_id_and_worker_state() {
+        let unit = Unit {
+            id: 5,
+            shape: Shape::Circle,
+            x: 650.0,
+            y: 50.0,
+            owner_id: 1,
+            is_enemy: false,
+            current_hp: 100.0,
+            max_hp: 100.0,
+            is_worker: true,
+            current_mana: None,
+            max_mana: None,
+            worker_state: Some("Mining".into()),
+        };
+
+        let json = serde_json::to_string(&unit).unwrap();
+        assert!(json.contains("\"id\":5"));
+        assert!(json.contains("\"worker_state\":\"Mining\""));
+    }
+
+    #[test]
+    fn unit_info_data_serialization() {
+        let info = UnitInfoData {
+            entity_id: 42,
+            attack_damage: Some(10.0),
+            attack_rate: Some(0.8),
+            attack_range: Some(150.0),
+            damage_type: Some(DamageType::FireMagical),
+            armor: None,
+            is_boss: false,
+            sell_value: Some(56),
+        };
+
+        let json = serde_json::to_string(&info).unwrap();
+        assert!(json.contains("\"entity_id\":42"));
+        assert!(json.contains("\"attack_damage\":10.0"));
+        assert!(json.contains("\"attack_rate\":0.8"));
+        assert!(json.contains("\"attack_range\":150.0"));
+        assert!(json.contains("\"damage_type\":\"FireMagical\""));
+        assert!(json.contains("\"armor\":null"));
+        assert!(json.contains("\"is_boss\":false"));
+        assert!(json.contains("\"sell_value\":56"));
     }
 
     #[test]

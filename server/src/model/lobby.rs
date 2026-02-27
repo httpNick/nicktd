@@ -1,10 +1,10 @@
 use super::components::{
-    Dead, Enemy, Health, Mana, PlayerIdComponent, Position, ShapeComponent, Worker,
+    Dead, Enemy, Health, Mana, PlayerIdComponent, Position, ShapeComponent, Worker, WorkerState,
 };
 use super::game_state::GameState;
 use super::messages::{SerializableGameState, ServerMessage, Unit};
 use super::player::Player;
-use bevy_ecs::prelude::Without;
+use bevy_ecs::prelude::{Entity, Without};
 use tokio::sync::broadcast;
 
 pub struct Lobby {
@@ -29,6 +29,7 @@ impl Lobby {
 
     pub fn broadcast_gamestate(&mut self) {
         let mut query = self.game_state.world.query_filtered::<(
+            Entity,
             &Position,
             &ShapeComponent,
             Option<&PlayerIdComponent>,
@@ -36,13 +37,25 @@ impl Lobby {
             Option<&Health>,
             Option<&Worker>,
             Option<&Mana>,
+            Option<&WorkerState>,
         ), Without<Dead>>();
 
         let units: Vec<Unit> = query
             .iter(&self.game_state.world)
             .map(
-                |(pos, shape, maybe_owner, maybe_enemy, maybe_health, maybe_worker, maybe_mana)| {
+                |(
+                    entity,
+                    pos,
+                    shape,
+                    maybe_owner,
+                    maybe_enemy,
+                    maybe_health,
+                    maybe_worker,
+                    maybe_mana,
+                    maybe_worker_state,
+                )| {
                     Unit {
+                        id: entity.index(),
                         x: pos.x,
                         y: pos.y,
                         shape: shape.0.clone(),
@@ -53,6 +66,7 @@ impl Lobby {
                         is_worker: maybe_worker.is_some(),
                         current_mana: maybe_mana.map(|m| m.current),
                         max_mana: maybe_mana.map(|m| m.max),
+                        worker_state: maybe_worker_state.map(|ws| format!("{ws:?}")),
                     }
                 },
             )
@@ -80,9 +94,69 @@ impl Lobby {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::handler::spawn::spawn_unit;
-    use crate::model::components::{Dead, Position};
+    use crate::handler::spawn::{spawn_unit, spawn_worker};
+    use crate::model::components::{Dead, Position, TargetPositions};
     use crate::model::shape::Shape;
+
+    #[test]
+    fn broadcast_gamestate_includes_entity_id_and_worker_state() {
+        let mut lobby = Lobby::new();
+
+        // Spawn a tower and record its entity index
+        let tower_entity = spawn_unit(
+            &mut lobby.game_state.world,
+            Position { x: 100.0, y: 300.0 },
+            Shape::Square,
+            1,
+        );
+        let tower_id = tower_entity.index();
+
+        // Spawn a worker starting at cart position (500.0, 50.0)
+        let targets = TargetPositions {
+            vein: Position { x: 300.0, y: 50.0 },
+            cart: Position { x: 500.0, y: 50.0 },
+        };
+        let worker_entity = spawn_worker(&mut lobby.game_state.world, 1, targets);
+        let worker_id = worker_entity.index();
+
+        let mut rx = lobby.tx.subscribe();
+        lobby.broadcast_gamestate();
+
+        let msg = rx.try_recv().unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&msg).unwrap();
+        let units = parsed["data"]["units"].as_array().unwrap();
+
+        assert_eq!(units.len(), 2);
+
+        let tower_unit = units
+            .iter()
+            .find(|u| (u["x"].as_f64().unwrap() - 100.0).abs() < 0.01)
+            .expect("tower unit not found");
+        assert_eq!(
+            tower_unit["id"].as_u64().unwrap(),
+            tower_id as u64,
+            "tower id should match entity index"
+        );
+        assert!(
+            tower_unit["worker_state"].is_null(),
+            "tower has no worker_state"
+        );
+
+        let worker_unit = units
+            .iter()
+            .find(|u| (u["x"].as_f64().unwrap() - 500.0).abs() < 0.01)
+            .expect("worker unit not found");
+        assert_eq!(
+            worker_unit["id"].as_u64().unwrap(),
+            worker_id as u64,
+            "worker id should match entity index"
+        );
+        assert_eq!(
+            worker_unit["worker_state"].as_str().unwrap(),
+            "MovingToVein",
+            "worker should start in MovingToVein state"
+        );
+    }
 
     #[test]
     fn broadcast_gamestate_after_receiver_is_dropped_does_not_panic() {

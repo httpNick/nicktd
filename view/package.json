@@ -8,7 +8,7 @@
     "build": "tsc && vite build",
     "preview": "vite preview",
     "type-check": "tsc --noEmit",
-    "test": "node --import tsx --test test_animations.ts"
+    "test": "node --import tsx --test test_animations.ts test_unit_info_panel.ts"
   },
   "keywords": [],
   "author": "",
