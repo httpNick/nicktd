@@ -1,9 +1,10 @@
 use super::components::{
     Dead, Enemy, Health, Mana, PlayerIdComponent, Position, ShapeComponent, Worker, WorkerState,
 };
-use super::game_state::GameState;
-use super::messages::{SerializableGameState, ServerMessage, Unit};
-use super::player::Player;
+use super::game_state::{GameState, NetworkChannel};
+use super::messages::{CombatEvent, SerializableGameState, ServerMessage, Unit};
+use super::player::{Player, Players};
+use bevy_ecs::message::Messages;
 use bevy_ecs::prelude::{Entity, Without};
 use tokio::sync::broadcast;
 
@@ -11,15 +12,23 @@ pub struct Lobby {
     pub game_state: GameState,
     pub players: Vec<Player>,
     pub tx: broadcast::Sender<String>,
+    /// Incremented each time the lobby is reset so the old game loop task can detect
+    /// that a new game has started and exit cleanly.
+    pub game_generation: u32,
 }
 
 impl Lobby {
     pub fn new() -> Self {
         let (tx, _) = broadcast::channel(16);
+        let mut game_state = GameState::new();
+        game_state.world.init_resource::<Messages<CombatEvent>>();
+        game_state.world.insert_resource(NetworkChannel(tx.clone()));
+        game_state.world.insert_resource(Players::default());
         Lobby {
-            game_state: GameState::new(),
+            game_state,
             players: Vec::new(),
             tx,
+            game_generation: 0,
         }
     }
 
@@ -97,6 +106,32 @@ mod tests {
     use crate::handler::spawn::{spawn_unit, spawn_worker};
     use crate::model::components::{Dead, Position, TargetPositions};
     use crate::model::shape::Shape;
+
+    #[test]
+    fn lobby_world_has_combat_event_messages_resource() {
+        let lobby = Lobby::new();
+        assert!(
+            lobby
+                .game_state
+                .world
+                .get_resource::<Messages<CombatEvent>>()
+                .is_some(),
+            "Messages<CombatEvent> must be registered in the world at lobby creation"
+        );
+    }
+
+    #[test]
+    fn lobby_world_has_network_channel_resource() {
+        let lobby = Lobby::new();
+        assert!(
+            lobby
+                .game_state
+                .world
+                .get_resource::<NetworkChannel>()
+                .is_some(),
+            "NetworkChannel must be inserted into the world at lobby creation"
+        );
+    }
 
     #[test]
     fn broadcast_gamestate_includes_entity_id_and_worker_state() {

@@ -1,6 +1,6 @@
 use crate::{
     database,
-    model::{components::PlayerIdComponent, game_state::GameState},
+    model::components::PlayerIdComponent,
     routes::ws::broadcast_lobby_status,
     state::ServerState,
 };
@@ -29,7 +29,8 @@ pub async fn remove_player_from_lobby(lobby_id: usize, player_id: i64, server_st
 
             lobby.players.retain(|p| p.id != player_id);
             if lobby.players.is_empty() {
-                lobby.game_state = GameState::new();
+                lobby.game_state.reset();
+                lobby.game_generation += 1;
             }
         }
     }

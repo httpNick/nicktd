@@ -1,4 +1,9 @@
+use bevy_ecs::prelude::Resource;
 use serde::Serialize;
+
+/// ECS Resource wrapping the lobby's player list so systems can read and award gold.
+#[derive(Resource, Clone, Debug, Default)]
+pub struct Players(pub Vec<Player>);
 
 #[derive(Clone, Debug, Serialize)]
 pub struct Player {

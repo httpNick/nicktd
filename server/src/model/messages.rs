@@ -2,9 +2,10 @@ use super::components::{DamageType, Position};
 use super::game_state::GamePhase;
 use super::player::Player;
 use super::shape::Shape;
+use bevy_ecs::message::Message;
 use serde::{Deserialize, Serialize};
 
-#[derive(Serialize, Clone, Debug)]
+#[derive(Serialize, Clone, Debug, Message)]
 pub struct CombatEvent {
     pub attacker_id: u32,
     pub target_id: u32,

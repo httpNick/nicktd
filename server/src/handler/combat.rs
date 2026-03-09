@@ -3,8 +3,10 @@ use crate::model::components::{
     HomePosition, InAttackRange, Mana, Position, Target, Worker,
 };
 use crate::model::constants::{LEFT_BOARD_END, RIGHT_BOARD_END, RIGHT_BOARD_START, TOTAL_HEIGHT};
+use crate::model::game_state::DeltaTime;
 use crate::model::messages::CombatEvent;
-use bevy_ecs::prelude::{Entity, With, Without, World};
+use bevy_ecs::message::Messages;
+use bevy_ecs::prelude::{Entity, Query, Res, With, Without, World};
 
 pub const SPEED: f32 = 80.0; // pixels per second
 
@@ -121,7 +123,8 @@ pub fn update_targeting(world: &mut World) {
     }
 }
 
-pub fn update_combat_movement(world: &mut World, tick_delta: f32) {
+pub fn update_combat_movement(world: &mut World) {
+    let tick_delta = world.resource::<DeltaTime>().0;
     // --- MOVEMENT & COLLISION SYSTEM ---
     let physical_entities: Vec<(Entity, Position, f32)> = world
         .query_filtered::<(Entity, &Position, &CollisionRadius), (Without<Worker>, Without<Dead>)>()
@@ -350,7 +353,7 @@ pub fn update_active_combat_stats(world: &mut World) {
     }
 }
 
-pub fn process_combat(world: &mut World, tick_delta: f32) -> Vec<CombatEvent> {
+fn execute_combat_round(world: &mut World, tick_delta: f32) -> Vec<CombatEvent> {
     let mut attacks = Vec::new(); // (AttackerEntity, TargetEntity, Damage, DamageType)
     let mut timer_updates = Vec::new(); // (AttackerEntity, NewTimerValue)
     let mut mana_updates = Vec::new(); // (AttackerEntity, NewManaValue)
@@ -434,6 +437,19 @@ pub fn process_combat(world: &mut World, tick_delta: f32) -> Vec<CombatEvent> {
     combat_events
 }
 
+/// Bevy-compatible exclusive system: reads `DeltaTime` from the world, runs the combat
+/// round, and writes any resulting [`CombatEvent`]s into the `Messages<CombatEvent>` resource.
+pub fn process_combat(world: &mut World) {
+    let tick_delta = world.resource::<DeltaTime>().0;
+    let events = execute_combat_round(world, tick_delta);
+    if !events.is_empty() {
+        let mut messages = world.resource_mut::<Messages<CombatEvent>>();
+        for event in events {
+            messages.write(event);
+        }
+    }
+}
+
 pub fn cleanup_dead_entities(world: &mut World) {
     let mut enemies_to_despawn = Vec::new();
     let mut towers_to_tag = Vec::new();
@@ -458,10 +474,9 @@ pub fn cleanup_dead_entities(world: &mut World) {
     }
 }
 
-pub fn update_mana(world: &mut World, tick_delta: f32) {
-    let mut query = world.query::<(Entity, &mut Mana)>();
-    for (_entity, mut mana) in query.iter_mut(world) {
-        mana.current = (mana.current + mana.regen * tick_delta).min(mana.max);
+pub fn update_mana(mut query: Query<&mut Mana>, time: Res<DeltaTime>) {
+    for mut mana in query.iter_mut() {
+        mana.current = (mana.current + mana.regen * time.0).min(mana.max);
     }
 }
 
@@ -575,22 +590,23 @@ mod tests {
         world.entity_mut(unit).insert(Target(enemy));
 
         let tick_delta = 1.0 / 30.0;
+        world.insert_resource(DeltaTime(tick_delta));
 
         // 1. Far away: should move
-        update_combat_movement(&mut world, tick_delta);
+        update_combat_movement(&mut world);
         let pos = world.entity(unit).get::<Position>().unwrap();
         assert!(pos.x > 0.0, "Unit should move towards enemy when far away");
 
         // 2. Within range: should stop
         // Teleport to just inside range (40 pixels away)
         world.entity_mut(unit).insert(Position { x: 60.0, y: 0.0 });
-        update_combat_movement(&mut world, tick_delta);
+        update_combat_movement(&mut world);
         let pos = world.entity(unit).get::<Position>().unwrap();
         assert_eq!(pos.x, 60.0, "Unit should NOT move when within attack range");
 
         // 3. Exactly at range: should stop
         world.entity_mut(unit).insert(Position { x: 50.0, y: 0.0 });
-        update_combat_movement(&mut world, tick_delta);
+        update_combat_movement(&mut world);
         let pos = world.entity(unit).get::<Position>().unwrap();
         assert_eq!(
             pos.x, 50.0,
@@ -621,7 +637,8 @@ mod tests {
         world.entity_mut(unit_b).insert(CollisionRadius(radius));
 
         let tick_delta = 1.0 / 30.0;
-        update_combat_movement(&mut world, tick_delta);
+        world.insert_resource(DeltaTime(tick_delta));
+        update_combat_movement(&mut world);
 
         let pos_a = world.entity(unit_a).get::<Position>().unwrap();
         let pos_b = world.entity(unit_b).get::<Position>().unwrap();
@@ -659,9 +676,10 @@ mod tests {
         world.entity_mut(unit).insert(Target(enemy));
 
         let tick_delta = 1.0 / 30.0;
+        world.insert_resource(DeltaTime(tick_delta));
 
         // 1. Far away: no marker
-        update_combat_movement(&mut world, tick_delta);
+        update_combat_movement(&mut world);
         assert!(
             world.entity(unit).get::<InAttackRange>().is_none(),
             "Should NOT have InAttackRange when far away"
@@ -669,7 +687,7 @@ mod tests {
 
         // 2. Within range: has marker
         world.entity_mut(unit).insert(Position { x: 60.0, y: 0.0 });
-        update_combat_movement(&mut world, tick_delta);
+        update_combat_movement(&mut world);
         assert!(
             world.entity(unit).get::<InAttackRange>().is_some(),
             "Should have InAttackRange when within range"
@@ -677,7 +695,7 @@ mod tests {
 
         // 3. Move back out: marker removed
         world.entity_mut(unit).insert(Position { x: 0.0, y: 0.0 });
-        update_combat_movement(&mut world, tick_delta);
+        update_combat_movement(&mut world);
         assert!(
             world.entity(unit).get::<InAttackRange>().is_none(),
             "Should remove InAttackRange when moving out of range"
@@ -709,10 +727,11 @@ mod tests {
         }
 
         let tick_delta = 1.0 / 30.0;
+        world.insert_resource(DeltaTime(tick_delta));
 
         // Run many ticks to let separation force push it
         for _ in 0..100 {
-            update_combat_movement(&mut world, tick_delta);
+            update_combat_movement(&mut world);
         }
 
         let pos = world.entity(unit).get::<Position>().unwrap();
@@ -776,7 +795,7 @@ mod tests {
         world.entity_mut(attacker).insert(Target(target));
 
         // 1. Process combat - should deal damage and reset timer
-        process_combat(&mut world, 0.1);
+        execute_combat_round(&mut world, 0.1);
 
         let target_health = world.entity(target).get::<Health>().unwrap();
         assert_eq!(target_health.current, 90.0, "Target should have lost 10 HP");
@@ -785,7 +804,7 @@ mod tests {
         assert_eq!(attacker_timer.0, 1.0, "Timer should be reset to 1.0");
 
         // 2. Process combat again with small delta - should NOT deal damage
-        process_combat(&mut world, 0.5);
+        execute_combat_round(&mut world, 0.5);
         let target_health = world.entity(target).get::<Health>().unwrap();
         assert_eq!(
             target_health.current, 90.0,
@@ -796,7 +815,7 @@ mod tests {
         assert_eq!(attacker_timer.0, 0.5, "Timer should have decreased by 0.5");
 
         // 3. Process combat enough to trigger second attack
-        process_combat(&mut world, 0.5); // Timer reaches 0.0
+        execute_combat_round(&mut world, 0.5); // Timer reaches 0.0
         let target_health = world.entity(target).get::<Health>().unwrap();
         assert_eq!(
             target_health.current, 80.0,
@@ -921,6 +940,7 @@ mod tests {
     #[test]
     fn mana_regeneration_works() {
         use crate::model::components::Mana;
+        use bevy_ecs::system::RunSystemOnce;
         let mut world = World::new();
 
         let unit = world
@@ -932,7 +952,8 @@ mod tests {
             .id();
 
         let tick_delta = 0.5; // Half a second
-        update_mana(&mut world, tick_delta);
+        world.insert_resource(DeltaTime(tick_delta));
+        world.run_system_once(update_mana).unwrap();
 
         let mana = world.entity(unit).get::<Mana>().unwrap();
         assert_eq!(mana.current, 12.5, "Should regenerate 2.5 mana in 0.5s");
@@ -946,7 +967,7 @@ mod tests {
             })
             .id();
 
-        update_mana(&mut world, tick_delta);
+        world.run_system_once(update_mana).unwrap();
         let mana_max = world.entity(unit_max).get::<Mana>().unwrap();
         assert_eq!(mana_max.current, 100.0, "Should cap at max mana");
     }
@@ -1087,6 +1108,7 @@ mod tests {
     fn physical_simulation_cycle() {
         let mut world = World::new();
         let tick_delta = 1.0 / 30.0;
+        world.insert_resource(DeltaTime(tick_delta));
 
         // Spawn unit and enemy
         let unit = crate::handler::spawn::spawn_unit(
@@ -1108,13 +1130,13 @@ mod tests {
 
         // 2. Movement - multiple ticks until in range
         for _ in 0..100 {
-            update_combat_movement(&mut world, tick_delta);
+            update_combat_movement(&mut world);
         }
         assert!(world.entity(unit).get::<InAttackRange>().is_some());
 
         // 3. Combat - deal damage
         let initial_health = world.entity(enemy).get::<Health>().unwrap().current;
-        process_combat(&mut world, tick_delta);
+        execute_combat_round(&mut world, tick_delta);
         let post_attack_health = world.entity(enemy).get::<Health>().unwrap().current;
         assert!(
             post_attack_health < initial_health,
@@ -1198,7 +1220,7 @@ mod tests {
 
         // 1. First attack: should be Fireball
         update_active_combat_stats(&mut world);
-        process_combat(&mut world, 0.1);
+        execute_combat_round(&mut world, 0.1);
 
         let target_health = world.entity(target).get::<Health>().unwrap().current;
         assert_eq!(
@@ -1214,7 +1236,7 @@ mod tests {
         // Reset timer manually for test
         world.entity_mut(mage).insert(AttackTimer(0.0));
         update_active_combat_stats(&mut world);
-        process_combat(&mut world, 0.1);
+        execute_combat_round(&mut world, 0.1);
 
         let target_health = world.entity(target).get::<Health>().unwrap().current;
         assert_eq!(
@@ -1243,7 +1265,7 @@ mod tests {
         });
         world.entity_mut(mage).insert(AttackTimer(0.0));
         update_active_combat_stats(&mut world);
-        process_combat(&mut world, 0.1);
+        execute_combat_round(&mut world, 0.1);
 
         let target_health = world.entity(target).get::<Health>().unwrap().current;
         assert_eq!(
@@ -1345,7 +1367,7 @@ mod tests {
 
         world.entity_mut(attacker).insert(Target(target));
 
-        let events = process_combat(&mut world, 0.1);
+        let events = execute_combat_round(&mut world, 0.1);
 
         assert_eq!(events.len(), 1, "Should return 1 combat event");
         let event = &events[0];
@@ -1452,7 +1474,8 @@ mod tests {
             .entity_mut(living_unit)
             .insert(CollisionRadius(radius));
 
-        update_combat_movement(&mut world, 1.0 / 30.0);
+        world.insert_resource(DeltaTime(1.0 / 30.0));
+        update_combat_movement(&mut world);
 
         // Dead tower should not have moved
         let dead_pos = world.entity(dead_tower).get::<Position>().unwrap();
@@ -1487,7 +1510,8 @@ mod tests {
         let unit_pos = Position { x: 595.0, y: 100.0 };
         let _unit = world.spawn((unit_pos, CollisionRadius(10.0))).id();
 
-        update_combat_movement(&mut world, 0.1);
+        world.insert_resource(DeltaTime(0.1));
+        update_combat_movement(&mut world);
 
         // Assert Worker position is UNCHANGED (not clamped to 600, not pushed by unit)
         let final_worker_pos = world.entity(worker).get::<Position>().unwrap();
@@ -1516,7 +1540,8 @@ mod tests {
             .spawn((Position { x: 590.0, y: 100.0 }, CollisionRadius(10.0)))
             .id();
 
-        update_combat_movement(&mut world2, 0.1);
+        world2.insert_resource(DeltaTime(0.1));
+        update_combat_movement(&mut world2);
 
         let final_unit2_pos = world2.entity(unit2).get::<Position>().unwrap();
         assert_eq!(
@@ -1754,6 +1779,122 @@ mod tests {
         assert_eq!(
             alive_pos.x, alive_home.x,
             "Surviving tower position should also be reset to home"
+        );
+    }
+
+    // --- Event System Tests (Task 2) ---
+
+    #[test]
+    fn process_combat_writes_messages_to_world() {
+        use crate::model::components::{AttackProfile, AttackStats, AttackTimer, DamageType, Health};
+        use crate::model::unit_config::DEFAULT_ATTACK_RANGE;
+        use bevy_ecs::message::Messages;
+        use bevy_ecs::system::RunSystemOnce;
+
+        let mut world = World::new();
+        world.init_resource::<Messages<CombatEvent>>();
+        world.insert_resource(DeltaTime(0.1));
+
+        let attacker = world
+            .spawn((
+                Position { x: 0.0, y: 0.0 },
+                InAttackRange,
+                AttackStats {
+                    damage: 10.0,
+                    rate: 1.0,
+                    damage_type: DamageType::PhysicalBasic,
+                },
+                CombatProfile {
+                    primary: AttackProfile {
+                        damage: 10.0,
+                        rate: 1.0,
+                        range: DEFAULT_ATTACK_RANGE,
+                        damage_type: DamageType::PhysicalBasic,
+                    },
+                    secondary: None,
+                    mana_cost: 0.0,
+                },
+                AttackTimer(0.0),
+            ))
+            .id();
+
+        let target = world
+            .spawn((
+                Position { x: 10.0, y: 0.0 },
+                Health {
+                    current: 100.0,
+                    max: 100.0,
+                },
+            ))
+            .id();
+
+        world.entity_mut(attacker).insert(Target(target));
+
+        world.run_system_once(process_combat).unwrap();
+
+        let messages = world.resource::<Messages<CombatEvent>>();
+        let mut cursor = messages.get_cursor();
+        let events: Vec<&CombatEvent> = cursor.read(messages).collect();
+
+        assert_eq!(events.len(), 1, "process_combat should write 1 CombatEvent message");
+        assert_eq!(events[0].attacker_id, attacker.index());
+        assert_eq!(events[0].target_id, target.index());
+        assert_eq!(events[0].attack_type, DamageType::PhysicalBasic);
+    }
+
+    // --- Task 3: Refactored System Signature Tests ---
+
+    #[test]
+    fn update_mana_reads_delta_time_from_resource() {
+        use crate::model::components::Mana;
+        use bevy_ecs::system::RunSystemOnce;
+
+        let mut world = World::new();
+        world.insert_resource(DeltaTime(1.0)); // 1 second delta
+
+        let unit = world
+            .spawn(Mana {
+                current: 0.0,
+                max: 100.0,
+                regen: 10.0,
+            })
+            .id();
+
+        world.run_system_once(update_mana).unwrap();
+
+        let mana = world.entity(unit).get::<Mana>().unwrap();
+        assert_eq!(
+            mana.current, 10.0,
+            "Should regenerate 10 mana/s using DeltaTime resource"
+        );
+    }
+
+    #[test]
+    fn update_combat_movement_reads_delta_time_from_resource() {
+        let mut world = World::new();
+        let tick_delta = 1.0 / 30.0;
+        world.insert_resource(DeltaTime(tick_delta));
+
+        let unit = crate::handler::spawn::spawn_unit(
+            &mut world,
+            Position { x: 100.0, y: 300.0 },
+            Shape::Square,
+            1,
+        );
+        let enemy = crate::handler::spawn::spawn_enemy(
+            &mut world,
+            Position { x: 200.0, y: 300.0 },
+            Shape::Triangle,
+            1,
+        );
+        world.entity_mut(unit).insert(Target(enemy));
+
+        update_combat_movement(&mut world);
+
+        let pos = world.entity(unit).get::<Position>().unwrap();
+        assert!(
+            pos.x > 100.0,
+            "Unit should move towards enemy using DeltaTime from resource"
         );
     }
 }

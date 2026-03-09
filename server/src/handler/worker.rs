@@ -1,8 +1,9 @@
 use crate::model::{
     components::{MiningTimer, PlayerIdComponent, Position, TargetPositions, Worker, WorkerState},
-    lobby::Lobby,
+    game_state::DeltaTime,
+    player::Players,
 };
-use bevy_ecs::prelude::{Entity, With};
+use bevy_ecs::prelude::{Commands, Entity, Query, Res, ResMut, With};
 
 pub const WORKER_SPEED: f32 = 50.0;
 
@@ -15,27 +16,28 @@ pub const CART_POSITIONS: [Position; 2] = [
     Position { x: 700.0, y: 550.0 },
 ];
 
-enum WorkerAction {
-    StartMining(Entity),
-    FinishMining(Entity),
-    DepositAndRestart(Entity, i64),
-}
+/// Bevy system: moves workers along their vein→cart route and awards gold on deposit.
+/// Requires `DeltaTime` and `Players` resources to be present in the world.
+pub fn update_workers(
+    mut commands: Commands,
+    mut worker_query: Query<
+        (
+            Entity,
+            &mut Position,
+            &mut WorkerState,
+            Option<&mut MiningTimer>,
+            &PlayerIdComponent,
+            &TargetPositions,
+        ),
+        With<Worker>,
+    >,
+    time: Res<DeltaTime>,
+    mut players: ResMut<Players>,
+) {
+    let tick_delta = time.0;
+    let mut deposit_pids: Vec<i64> = Vec::new();
 
-pub fn update_workers(lobby: &mut Lobby, tick_delta: f32) {
-    let mut actions = Vec::new();
-
-    let mut query = lobby.game_state.world.query_filtered::<(
-        Entity,
-        &mut Position,
-        &mut WorkerState,
-        Option<&mut MiningTimer>,
-        &PlayerIdComponent,
-        &TargetPositions,
-    ), With<Worker>>();
-
-    for (entity, mut pos, mut state, mut timer_opt, player_id, targets) in
-        query.iter_mut(&mut lobby.game_state.world)
-    {
+    for (entity, mut pos, mut state, timer_opt, player_id, targets) in worker_query.iter_mut() {
         match *state {
             WorkerState::MovingToVein => {
                 let target = targets.vein;
@@ -48,18 +50,18 @@ pub fn update_workers(lobby: &mut Lobby, tick_delta: f32) {
                     pos.x = target.x;
                     pos.y = target.y;
                     *state = WorkerState::Mining;
-                    actions.push(WorkerAction::StartMining(entity));
+                    commands.entity(entity).insert(MiningTimer(10.0));
                 } else {
                     pos.x += (dx / dist) * move_dist;
                     pos.y += (dy / dist) * move_dist;
                 }
             }
             WorkerState::Mining => {
-                if let Some(ref mut timer) = timer_opt {
+                if let Some(mut timer) = timer_opt {
                     timer.0 -= tick_delta;
                     if timer.0 <= 0.0 {
                         *state = WorkerState::MovingToCart;
-                        actions.push(WorkerAction::FinishMining(entity));
+                        commands.entity(entity).remove::<MiningTimer>();
                     }
                 }
             }
@@ -74,7 +76,7 @@ pub fn update_workers(lobby: &mut Lobby, tick_delta: f32) {
                     pos.x = target.x;
                     pos.y = target.y;
                     *state = WorkerState::MovingToVein;
-                    actions.push(WorkerAction::DepositAndRestart(entity, player_id.0));
+                    deposit_pids.push(player_id.0);
                 } else {
                     pos.x += (dx / dist) * move_dist;
                     pos.y += (dy / dist) * move_dist;
@@ -83,23 +85,9 @@ pub fn update_workers(lobby: &mut Lobby, tick_delta: f32) {
         }
     }
 
-    for action in actions {
-        match action {
-            WorkerAction::StartMining(e) => {
-                lobby
-                    .game_state
-                    .world
-                    .entity_mut(e)
-                    .insert(MiningTimer(10.0));
-            }
-            WorkerAction::FinishMining(e) => {
-                lobby.game_state.world.entity_mut(e).remove::<MiningTimer>();
-            }
-            WorkerAction::DepositAndRestart(_e, pid) => {
-                if let Some(player) = lobby.players.iter_mut().find(|p| p.id == pid) {
-                    player.gold += 1;
-                }
-            }
+    for pid in deposit_pids {
+        if let Some(player) = players.0.iter_mut().find(|p| p.id == pid) {
+            player.gold += 1;
         }
     }
 }
@@ -109,27 +97,89 @@ mod tests {
     use super::*;
     use crate::model::game_state::GamePhase;
     use crate::model::player::Player;
+    use bevy_ecs::prelude::World;
+    use bevy_ecs::system::RunSystemOnce;
+
+    fn setup_world_with_player(player_id: i64) -> World {
+        let mut world = World::new();
+        world.insert_resource(DeltaTime(1.0 / 30.0));
+        world.insert_resource(Players(vec![Player {
+            id: player_id,
+            username: "test".to_string(),
+            gold: 0,
+        }]));
+        world
+    }
+
+    // --- Task 4 TDD: verify update_workers works as a Bevy system ---
+
+    #[test]
+    fn update_workers_moves_worker_via_system() {
+        let mut world = setup_world_with_player(1);
+
+        let targets = TargetPositions {
+            vein: VEIN_POSITIONS[0],
+            cart: CART_POSITIONS[0],
+        };
+        let worker = world
+            .spawn((
+                CART_POSITIONS[0], // start at cart
+                Worker,
+                WorkerState::MovingToVein,
+                PlayerIdComponent(1),
+                targets,
+            ))
+            .id();
+
+        world.run_system_once(update_workers).unwrap();
+
+        let pos = world.entity(worker).get::<Position>().unwrap();
+        assert!(
+            pos.y < CART_POSITIONS[0].y,
+            "Worker should move north (decrease Y) towards the vein"
+        );
+    }
+
+    #[test]
+    fn update_workers_awards_gold_to_players_resource() {
+        let mut world = setup_world_with_player(1);
+
+        let targets = TargetPositions {
+            vein: VEIN_POSITIONS[0],
+            cart: CART_POSITIONS[0],
+        };
+        // Start at cart position, moving to vein — teleport to cart in MovingToCart state
+        let _worker = world
+            .spawn((
+                CART_POSITIONS[0], // already at cart
+                Worker,
+                WorkerState::MovingToCart,
+                PlayerIdComponent(1),
+                targets,
+            ))
+            .id();
+
+        world.run_system_once(update_workers).unwrap();
+
+        let gold = world.resource::<Players>().0[0].gold;
+        assert_eq!(
+            gold, 1,
+            "Depositing at cart should award 1 gold via Players resource"
+        );
+    }
+
+    // --- Existing behavior preserved ---
 
     #[test]
     fn worker_behavior_cycle() {
-        let mut lobby = Lobby::new();
-        lobby.game_state.phase = GamePhase::Combat;
-        // Add player
-        lobby.players.push(Player {
-            id: 1,
-            username: "test".to_string(),
-            gold: 0,
-        });
+        let mut world = setup_world_with_player(1);
 
         let targets = TargetPositions {
             vein: VEIN_POSITIONS[0],
             cart: CART_POSITIONS[0],
         };
 
-        // Spawn Worker
-        let worker = lobby
-            .game_state
-            .world
+        let worker = world
             .spawn((
                 targets.cart,
                 Worker,
@@ -139,91 +189,51 @@ mod tests {
             ))
             .id();
 
-        let tick_delta = 1.0 / 30.0;
-
         // 1. Check Movement
-        update_workers(&mut lobby, tick_delta);
-        let pos = lobby
-            .game_state
-            .world
-            .entity(worker)
-            .get::<Position>()
-            .unwrap();
+        world.run_system_once(update_workers).unwrap();
+        let pos = world.entity(worker).get::<Position>().unwrap();
         assert!(
             pos.y < CART_POSITIONS[0].y,
             "Worker should move North (decrease Y)"
         );
 
         // 2. Check Arrival at Vein -> Mining
-        // Teleport to Vein
-        lobby
-            .game_state
-            .world
-            .entity_mut(worker)
-            .insert(VEIN_POSITIONS[0]);
-        update_workers(&mut lobby, tick_delta);
+        world.entity_mut(worker).insert(VEIN_POSITIONS[0]);
+        world.run_system_once(update_workers).unwrap();
 
-        // State should be Mining
-        let state = lobby
-            .game_state
-            .world
-            .entity(worker)
-            .get::<WorkerState>()
-            .unwrap();
+        let state = world.entity(worker).get::<WorkerState>().unwrap();
         assert_eq!(*state, WorkerState::Mining);
-        // Should have MiningTimer
-        let timer = lobby.game_state.world.entity(worker).get::<MiningTimer>();
+        let timer = world.entity(worker).get::<MiningTimer>();
         assert!(timer.is_some());
 
         // 3. Check Mining Timer Expire -> MovingToCart
-        // Set timer to 0
-        lobby
-            .game_state
-            .world
-            .entity_mut(worker)
-            .insert(MiningTimer(0.0));
-        update_workers(&mut lobby, tick_delta);
+        world.entity_mut(worker).insert(MiningTimer(0.0));
+        world.run_system_once(update_workers).unwrap();
 
-        let state = lobby
-            .game_state
-            .world
-            .entity(worker)
-            .get::<WorkerState>()
-            .unwrap();
+        let state = world.entity(worker).get::<WorkerState>().unwrap();
         assert_eq!(*state, WorkerState::MovingToCart);
 
         // 4. Check Arrival at Cart -> Deposit
-        // Teleport to Cart
-        lobby
-            .game_state
-            .world
-            .entity_mut(worker)
-            .insert(CART_POSITIONS[0]);
-        update_workers(&mut lobby, tick_delta);
+        world.entity_mut(worker).insert(CART_POSITIONS[0]);
+        world.run_system_once(update_workers).unwrap();
 
-        // State should be MovingToVein
-        let state = lobby
-            .game_state
-            .world
-            .entity(worker)
-            .get::<WorkerState>()
-            .unwrap();
+        let state = world.entity(worker).get::<WorkerState>().unwrap();
         assert_eq!(*state, WorkerState::MovingToVein);
 
-        // Player gold should increase
-        assert_eq!(lobby.players[0].gold, 1);
+        let gold = world.resource::<Players>().0[0].gold;
+        assert_eq!(gold, 1);
     }
 
     #[test]
     fn test_workers_active_in_all_phases() {
         for phase in [GamePhase::Build, GamePhase::Combat, GamePhase::Victory] {
-            let mut lobby = Lobby::new();
-            lobby.game_state.phase = phase;
-            lobby.players.push(Player {
+            let mut world = World::new();
+            world.insert_resource(DeltaTime(1.0 / 30.0));
+            world.insert_resource(Players(vec![Player {
                 id: 1,
                 username: "test".to_string(),
                 gold: 100,
-            });
+            }]));
 
             let initial_pos = Position { x: 700.0, y: 250.0 };
             let targets = TargetPositions {
@@ -231,10 +241,7 @@ mod tests {
                 cart: CART_POSITIONS[0],
             };
 
-            // Spawn Worker
-            let worker = lobby
-                .game_state
-                .world
+            let worker = world
                 .spawn((
                     initial_pos,
                     Worker,
@@ -244,15 +251,11 @@ mod tests {
                 ))
                 .id();
 
-            let tick_delta = 1.0 / 30.0;
-            update_workers(&mut lobby, tick_delta);
+            // Phase doesn't gate this system; workers always run
+            let _ = phase;
+            world.run_system_once(update_workers).unwrap();
 
-            let current_pos = lobby
-                .game_state
-                .world
-                .entity(worker)
-                .get::<Position>()
-                .unwrap();
+            let current_pos = world.entity(worker).get::<Position>().unwrap();
             assert!(
                 current_pos.y < initial_pos.y,
                 "Worker should move during phase {:?}",

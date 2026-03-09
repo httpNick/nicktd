@@ -53,7 +53,8 @@ pub async fn pre_game_loop(
                                         if lobby.players.len() < 2 {
                                             lobby.players.push(Player { id: player_id, username: username.clone(), gold: 100 });
                                             if lobby.players.len() == 2 {
-                                                tokio::spawn(crate::handler::game_loop::run_game_loop(server_state.clone(), lobby_id));
+                                                let generation = lobby.game_generation;
+                                                tokio::spawn(crate::handler::game_loop::run_game_loop(server_state.clone(), lobby_id, generation));
                                             }
                                             result = PreGameLoopResult::Joined(lobby_id);
                                             should_break = true;
