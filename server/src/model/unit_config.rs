@@ -5,7 +5,7 @@ use super::shape::Shape;
 pub const DEFAULT_COLLISION_RADIUS: f32 = 20.0;
 pub const DEFAULT_ATTACK_RANGE: f32 = 45.0;
 pub const FIREBALL_MANA_COST: f32 = 20.0;
-pub const MAGE_MELEE_DAMAGE: f32 = 2.0;
+pub const MAGE_MELEE_DAMAGE: f32 = 2.2; // Increased by 10% from 2.0
 
 pub const DEFAULT_HEALTH: f32 = 100.0;
 pub const DEFAULT_DAMAGE: f32 = 10.0;

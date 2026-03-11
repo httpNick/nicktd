@@ -1,7 +1,5 @@
 use crate::{
-    database,
-    model::components::PlayerIdComponent,
-    routes::ws::broadcast_lobby_status,
+    database, model::components::PlayerIdComponent, routes::ws::broadcast_lobby_status,
     state::ServerState,
 };
 use bevy_ecs::prelude::Entity;

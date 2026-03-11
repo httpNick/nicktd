@@ -16,8 +16,8 @@ use crate::{
 };
 use bevy_ecs::message::{MessageReader, Messages};
 use bevy_ecs::prelude::{Res, ResMut, Schedule, SystemSet};
-use bevy_ecs::schedule::common_conditions::resource_equals;
 use bevy_ecs::schedule::IntoScheduleConfigs;
+use bevy_ecs::schedule::common_conditions::resource_equals;
 use std::time::Duration;
 
 /// Bevy system: reads buffered [`CombatEvent`] messages and broadcasts them to all
@@ -145,8 +145,14 @@ pub async fn run_game_loop(server_state: ServerState, lobby_id: usize, generatio
                 break;
             }
             // Insert per-tick resources.
-            lobby.game_state.world.insert_resource(DeltaTime(tick_delta));
-            lobby.game_state.world.insert_resource(lobby.game_state.phase);
+            lobby
+                .game_state
+                .world
+                .insert_resource(DeltaTime(tick_delta));
+            lobby
+                .game_state
+                .world
+                .insert_resource(lobby.game_state.phase);
 
             // Build phase orchestration: spawn workers and tick the phase timer.
             if lobby.game_state.phase == GamePhase::Build {
@@ -177,7 +183,10 @@ pub async fn run_game_loop(server_state: ServerState, lobby_id: usize, generatio
                         lobby.game_state.phase = GamePhase::Combat;
                         // Sync the updated phase into the world immediately so combat
                         // systems run on this same tick.
-                        lobby.game_state.world.insert_resource(lobby.game_state.phase);
+                        lobby
+                            .game_state
+                            .world
+                            .insert_resource(lobby.game_state.phase);
 
                         use crate::model::constants::{BOARD_SIZE, RIGHT_BOARD_START};
                         let spawn_x_left = BOARD_SIZE / 2.0;
@@ -200,7 +209,10 @@ pub async fn run_game_loop(server_state: ServerState, lobby_id: usize, generatio
             }
 
             // Sync Players resource, run the main schedule, then sync back.
-            lobby.game_state.world.insert_resource(Players(lobby.players.clone()));
+            lobby
+                .game_state
+                .world
+                .insert_resource(Players(lobby.players.clone()));
             schedule.run(&mut lobby.game_state.world);
             lobby.players = lobby.game_state.world.resource::<Players>().0.clone();
 
@@ -264,13 +276,15 @@ mod tests {
         world.insert_resource(GamePhase::Build);
 
         // Pre-write a combat event; it should not be broadcast in Build phase.
-        world.resource_mut::<Messages<CombatEvent>>().write(CombatEvent {
-            attacker_id: 1,
-            target_id: 2,
-            attack_type: DamageType::PhysicalBasic,
-            start_pos: Position { x: 0.0, y: 0.0 },
-            end_pos: Position { x: 10.0, y: 0.0 },
-        });
+        world
+            .resource_mut::<Messages<CombatEvent>>()
+            .write(CombatEvent {
+                attacker_id: 1,
+                target_id: 2,
+                attack_type: DamageType::PhysicalBasic,
+                start_pos: Position { x: 0.0, y: 0.0 },
+                end_pos: Position { x: 10.0, y: 0.0 },
+            });
 
         let mut schedule = build_main_schedule();
         schedule.run(&mut world);
@@ -298,13 +312,15 @@ mod tests {
         world.insert_resource(GamePhase::Combat);
 
         // Write one combat event before the first tick.
-        world.resource_mut::<Messages<CombatEvent>>().write(CombatEvent {
-            attacker_id: 1,
-            target_id: 2,
-            attack_type: DamageType::PhysicalBasic,
-            start_pos: Position { x: 0.0, y: 0.0 },
-            end_pos: Position { x: 10.0, y: 0.0 },
-        });
+        world
+            .resource_mut::<Messages<CombatEvent>>()
+            .write(CombatEvent {
+                attacker_id: 1,
+                target_id: 2,
+                attack_type: DamageType::PhysicalBasic,
+                start_pos: Position { x: 0.0, y: 0.0 },
+                end_pos: Position { x: 10.0, y: 0.0 },
+            });
 
         let mut schedule = build_main_schedule();
 
@@ -637,8 +653,18 @@ mod tests {
 
         // Spawn a unit on the left board and an enemy directly next to it so the unit
         // is immediately within attack range and can fire on the first tick.
-        let unit = spawn_unit(&mut world, Position { x: 100.0, y: 300.0 }, Shape::Square, 1);
-        let enemy = spawn_enemy(&mut world, Position { x: 120.0, y: 300.0 }, Shape::Triangle, 1);
+        let unit = spawn_unit(
+            &mut world,
+            Position { x: 100.0, y: 300.0 },
+            Shape::Square,
+            1,
+        );
+        let enemy = spawn_enemy(
+            &mut world,
+            Position { x: 120.0, y: 300.0 },
+            Shape::Triangle,
+            1,
+        );
 
         let mut schedule = build_main_schedule();
 
@@ -681,7 +707,8 @@ mod tests {
         );
 
         // Verify workers still run in Combat phase (Workers system set is not phase-gated).
-        let mut worker_query = world.query_filtered::<Entity, With<crate::model::components::Worker>>();
+        let mut worker_query =
+            world.query_filtered::<Entity, With<crate::model::components::Worker>>();
         // No workers were spawned in this test; the system must not panic when there are none.
         let _ = worker_query.iter(&world).count();
     }
@@ -691,8 +718,8 @@ mod tests {
     #[test]
     fn schedule_runs_workers_in_build_phase() {
         use crate::handler::spawn::spawn_worker;
-        use crate::model::components::{Position as Pos, TargetPositions};
         use crate::handler::worker::{CART_POSITIONS, VEIN_POSITIONS};
+        use crate::model::components::{Position as Pos, TargetPositions};
         use bevy_ecs::prelude::World;
 
         let mut world = World::new();
@@ -742,13 +769,15 @@ mod tests {
         world.insert_resource(NetworkChannel(tx));
 
         // Write a combat event directly to the Messages resource
-        world.resource_mut::<Messages<CombatEvent>>().write(CombatEvent {
-            attacker_id: 1,
-            target_id: 2,
-            attack_type: DamageType::PhysicalBasic,
-            start_pos: Position { x: 0.0, y: 0.0 },
-            end_pos: Position { x: 10.0, y: 0.0 },
-        });
+        world
+            .resource_mut::<Messages<CombatEvent>>()
+            .write(CombatEvent {
+                attacker_id: 1,
+                target_id: 2,
+                attack_type: DamageType::PhysicalBasic,
+                start_pos: Position { x: 0.0, y: 0.0 },
+                end_pos: Position { x: 10.0, y: 0.0 },
+            });
 
         world.run_system_once(broadcast_events).unwrap();
 

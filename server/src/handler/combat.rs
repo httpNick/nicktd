@@ -1786,7 +1786,9 @@ mod tests {
 
     #[test]
     fn process_combat_writes_messages_to_world() {
-        use crate::model::components::{AttackProfile, AttackStats, AttackTimer, DamageType, Health};
+        use crate::model::components::{
+            AttackProfile, AttackStats, AttackTimer, DamageType, Health,
+        };
         use crate::model::unit_config::DEFAULT_ATTACK_RANGE;
         use bevy_ecs::message::Messages;
         use bevy_ecs::system::RunSystemOnce;
@@ -1836,7 +1838,11 @@ mod tests {
         let mut cursor = messages.get_cursor();
         let events: Vec<&CombatEvent> = cursor.read(messages).collect();
 
-        assert_eq!(events.len(), 1, "process_combat should write 1 CombatEvent message");
+        assert_eq!(
+            events.len(),
+            1,
+            "process_combat should write 1 CombatEvent message"
+        );
         assert_eq!(events[0].attacker_id, attacker.index());
         assert_eq!(events[0].target_id, target.index());
         assert_eq!(events[0].attack_type, DamageType::PhysicalBasic);
