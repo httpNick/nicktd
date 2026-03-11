@@ -9,6 +9,7 @@ pub const MAGE_MELEE_DAMAGE: f32 = 2.2; // Increased by 10% from 2.0
 
 pub const DEFAULT_HEALTH: f32 = 100.0;
 pub const DEFAULT_DAMAGE: f32 = 10.0;
+pub const TRIANGLE_PRIMARY_DAMAGE: f32 = DEFAULT_DAMAGE * 1.1; // Buffed Triangle primary damage
 pub const DEFAULT_ATTACK_RATE: f32 = 0.8;
 pub const RANGED_ATTACK_RANGE: f32 = 150.0;
 pub const MAGE_MANA_MAX: f32 = 100.0;
@@ -41,7 +42,7 @@ pub fn get_unit_profile(shape: Shape) -> UnitProfile {
     let combat = match shape {
         Shape::Triangle => CombatProfile {
             primary: AttackProfile {
-                damage: DEFAULT_DAMAGE,
+                damage: TRIANGLE_PRIMARY_DAMAGE, // Using the new shape-specific constant
                 rate: DEFAULT_ATTACK_RATE,
                 range: RANGED_ATTACK_RANGE,
                 damage_type: DamageType::PhysicalPierce,
