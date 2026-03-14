@@ -123,12 +123,22 @@ pub struct Mana {
     pub regen: f32,
 }
 
+/// Tags a player-sent enemy with the gold reward the defending player receives on kill.
+#[derive(Component, Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Bounty(pub u32);
+
 #[derive(Component, Clone, Copy, Debug, PartialEq)]
 pub struct AttackTimer(pub f32);
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn bounty_component_works() {
+        let bounty = Bounty(50);
+        assert_eq!(bounty.0, 50);
+    }
 
     #[test]
     fn physical_components_exist() {

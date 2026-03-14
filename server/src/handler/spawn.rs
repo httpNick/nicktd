@@ -1,12 +1,12 @@
 use crate::model::components::{
-    AttackRange, AttackStats, AttackTimer, Boss, CollisionRadius, DefenseSpecialty, DefenseStats,
-    Enemy, Health, HomePosition, PlayerIdComponent, Position, Resistances, ShapeComponent,
-    TargetPositions, Worker, WorkerState,
+    AttackRange, AttackStats, AttackTimer, Boss, Bounty, CollisionRadius, DefenseSpecialty,
+    DefenseStats, Enemy, Health, HomePosition, PlayerIdComponent, Position, Resistances,
+    ShapeComponent, TargetPositions, Worker, WorkerState,
 };
 use crate::model::shape::Shape;
 use crate::model::unit_config::{
     BOSS_DAMAGE_MULTIPLIER, BOSS_HEALTH_MULTIPLIER, DEFAULT_COLLISION_RADIUS, DEFAULT_HEALTH,
-    get_unit_profile,
+    get_sent_unit_profile, get_unit_profile,
 };
 use bevy_ecs::prelude::{Entity, World};
 
@@ -62,6 +62,57 @@ pub fn spawn_enemy(world: &mut World, pos: Position, shape: Shape, wave: u32) ->
     }
 
     entity.id()
+}
+
+/// Spawns a player-sent enemy on the opponent's board.
+///
+/// Applies the sent unit's health multiplier on top of wave scaling, and attaches
+/// a [`Bounty`] component so the defending player receives gold on kill.
+pub fn spawn_sent_enemy(
+    world: &mut World,
+    pos: Position,
+    shape: Shape,
+    wave: u32,
+    bounty: u32,
+) -> Entity {
+    let profile = get_unit_profile(shape);
+    let sent_profile = get_sent_unit_profile(shape);
+    let scaling_multiplier = crate::handler::wave::get_scaling_multiplier(wave);
+
+    let final_health = DEFAULT_HEALTH * scaling_multiplier * sent_profile.health_multiplier;
+    let final_damage = profile.combat.primary.damage * scaling_multiplier;
+
+    world
+        .spawn((
+            pos,
+            HomePosition(pos),
+            ShapeComponent(shape),
+            Enemy,
+            CollisionRadius(profile.radius),
+            AttackRange(profile.combat.primary.range),
+            Health {
+                current: final_health,
+                max: final_health,
+            },
+            AttackStats {
+                damage: final_damage,
+                rate: profile.combat.primary.rate,
+                damage_type: profile.combat.primary.damage_type,
+            },
+            profile.combat,
+            DefenseStats {
+                armor: 0.0,
+                resistances: Resistances {
+                    fire: 0.0,
+                    ice: 0.0,
+                    lightning: 0.0,
+                },
+                specialty: DefenseSpecialty::None,
+            },
+            AttackTimer(0.0),
+            Bounty(bounty),
+        ))
+        .id()
 }
 
 pub fn spawn_unit(world: &mut World, pos: Position, shape: Shape, player_id: i64) -> Entity {
@@ -245,6 +296,64 @@ mod tests {
             (stats.damage - get_unit_profile(Shape::Square).combat.primary.damage * multiplier)
                 .abs()
                 < 0.1
+        );
+    }
+
+    #[test]
+    fn spawn_sent_enemy_has_bounty_component() {
+        use crate::model::components::Bounty;
+
+        let mut world = World::new();
+        let entity = spawn_sent_enemy(
+            &mut world,
+            Position { x: 100.0, y: 30.0 },
+            Shape::Square,
+            1,
+            5,
+        );
+        let bounty = world.entity(entity).get::<Bounty>();
+        assert!(bounty.is_some(), "Sent enemy should have Bounty component");
+        assert_eq!(bounty.unwrap().0, 5);
+    }
+
+    #[test]
+    fn spawn_sent_enemy_applies_health_multiplier() {
+        use crate::handler::wave::get_scaling_multiplier;
+        use crate::model::components::Health;
+        use crate::model::unit_config::{DEFAULT_HEALTH, SENT_CIRCLE_HEALTH_MULT};
+
+        let mut world = World::new();
+        let wave = 1;
+        let entity = spawn_sent_enemy(
+            &mut world,
+            Position { x: 100.0, y: 30.0 },
+            Shape::Circle,
+            wave,
+            20,
+        );
+        let health = world.entity(entity).get::<Health>().unwrap();
+        let expected = DEFAULT_HEALTH * get_scaling_multiplier(wave) * SENT_CIRCLE_HEALTH_MULT;
+        assert!(
+            (health.max - expected).abs() < 0.01,
+            "Sent Circle health should apply the health multiplier"
+        );
+    }
+
+    #[test]
+    fn spawn_sent_enemy_is_tagged_as_enemy() {
+        use crate::model::components::Enemy;
+
+        let mut world = World::new();
+        let entity = spawn_sent_enemy(
+            &mut world,
+            Position { x: 100.0, y: 30.0 },
+            Shape::Triangle,
+            1,
+            8,
+        );
+        assert!(
+            world.entity(entity).get::<Enemy>().is_some(),
+            "Sent enemy should have Enemy component"
         );
     }
 

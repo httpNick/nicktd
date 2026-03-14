@@ -63,16 +63,10 @@ mod tests {
         {
             let mut lobbies = server_state.lobbies.lock().await;
             let lobby = &mut lobbies[0];
-            lobby.players.push(Player {
-                id: player_id,
-                username: "test".into(),
-                gold: 100,
-            });
-            lobby.players.push(Player {
-                id: 456,
-                username: "other".into(),
-                gold: 100,
-            }); // Keep lobby alive
+            lobby
+                .players
+                .push(Player::new(player_id, "test".into(), 100));
+            lobby.players.push(Player::new(456, "other".into(), 100)); // Keep lobby alive
 
             // Spawn an entity for the player
             lobby.game_state.world.spawn((
@@ -121,11 +115,9 @@ mod tests {
         {
             let mut lobbies = server_state.lobbies.lock().await;
             let lobby = &mut lobbies[0];
-            lobby.players.push(Player {
-                id: player_id,
-                username: "test".into(),
-                gold: 100,
-            });
+            lobby
+                .players
+                .push(Player::new(player_id, "test".into(), 100));
 
             lobby.game_state.world.spawn((
                 Position { x: 100.0, y: 100.0 },

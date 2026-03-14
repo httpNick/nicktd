@@ -51,7 +51,7 @@ pub async fn pre_game_loop(
                                     let mut lobbies = server_state.lobbies.lock().await;
                                     if let Some(lobby) = lobbies.get_mut(lobby_id) {
                                         if lobby.players.len() < 2 {
-                                            lobby.players.push(Player { id: player_id, username: username.clone(), gold: 100 });
+                                            lobby.players.push(Player::new(player_id, username.clone(), 100));
                                             if lobby.players.len() == 2 {
                                                 let generation = lobby.game_generation;
                                                 tokio::spawn(crate::handler::game_loop::run_game_loop(server_state.clone(), lobby_id, generation));

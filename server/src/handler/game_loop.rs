@@ -204,6 +204,38 @@ pub async fn run_game_loop(server_state: ServerState, lobby_id: usize, generatio
                                 );
                             }
                         }
+
+                        // Drain each player's spawning queue and send their units to the
+                        // opponent's board.
+                        let queues: Vec<Vec<crate::model::shape::Shape>> = lobby
+                            .players
+                            .iter()
+                            .map(|p| p.spawning_queue.clone())
+                            .collect();
+                        for (player_idx, queue) in queues.iter().enumerate() {
+                            let opponent_x = if player_idx == 0 {
+                                spawn_x_right
+                            } else {
+                                spawn_x_left
+                            };
+                            for &shape in queue {
+                                let sent_profile =
+                                    crate::model::unit_config::get_sent_unit_profile(shape);
+                                crate::handler::spawn::spawn_sent_enemy(
+                                    &mut lobby.game_state.world,
+                                    Position {
+                                        x: opponent_x,
+                                        y: 30.0,
+                                    },
+                                    shape,
+                                    lobby.game_state.wave_number,
+                                    sent_profile.bounty,
+                                );
+                            }
+                        }
+                        for player in &mut lobby.players {
+                            player.spawning_queue.clear();
+                        }
                     }
                 }
             }
@@ -227,9 +259,10 @@ pub async fn run_game_loop(server_state: ServerState, lobby_id: usize, generatio
                     lobby.game_state.wave_number += 1;
                     lobby.game_state.phase_timer = 30.0;
 
-                    // Award wave completion bonus.
+                    // Award wave completion bonus and permanent income.
                     for player in &mut lobby.players {
                         player.gold += 50;
+                        player.gold += player.income;
                     }
                 }
             }
@@ -346,16 +379,8 @@ mod tests {
         use crate::model::components::Enemy;
         use crate::model::constants::{BOARD_SIZE, RIGHT_BOARD_START};
         let mut lobby = Lobby::new();
-        lobby.players.push(Player {
-            id: 1,
-            username: "p1".into(),
-            gold: 100,
-        });
-        lobby.players.push(Player {
-            id: 2,
-            username: "p2".into(),
-            gold: 100,
-        });
+        lobby.players.push(Player::new(1, "p1".into(), 100));
+        lobby.players.push(Player::new(2, "p2".into(), 100));
         lobby.game_state.phase_timer = 0.0; // Trigger transition
 
         // --- SIMULATED TICK START ---
@@ -395,16 +420,8 @@ mod tests {
     #[test]
     fn test_starting_workers_spawned_when_lobby_full() {
         let mut lobby = Lobby::new();
-        lobby.players.push(Player {
-            id: 1,
-            username: "p1".into(),
-            gold: 100,
-        });
-        lobby.players.push(Player {
-            id: 2,
-            username: "p2".into(),
-            gold: 100,
-        });
+        lobby.players.push(Player::new(1, "p1".into(), 100));
+        lobby.players.push(Player::new(2, "p2".into(), 100));
 
         assert!(lobby.is_full());
 
@@ -469,11 +486,7 @@ mod tests {
         let mut lobby = Lobby::new();
         lobby.game_state.phase = GamePhase::Combat;
         lobby.game_state.wave_number = 1;
-        lobby.players.push(Player {
-            id: 1,
-            username: "p1".into(),
-            gold: 100,
-        });
+        lobby.players.push(Player::new(1, "p1".into(), 100));
 
         // Simulate combat ending
         // --- SIMULATED TICK START ---
@@ -527,16 +540,8 @@ mod tests {
     #[test]
     fn test_full_game_progression_logic() {
         let mut lobby = Lobby::new();
-        lobby.players.push(Player {
-            id: 1,
-            username: "p1".into(),
-            gold: 100,
-        });
-        lobby.players.push(Player {
-            id: 2,
-            username: "p2".into(),
-            gold: 100,
-        });
+        lobby.players.push(Player::new(1, "p1".into(), 100));
+        lobby.players.push(Player::new(2, "p2".into(), 100));
 
         // Wave 1 Build phase
         assert_eq!(lobby.game_state.wave_number, 1);
@@ -725,11 +730,11 @@ mod tests {
         let mut world = World::new();
         world.init_resource::<Messages<CombatEvent>>();
         world.insert_resource(DeltaTime(1.0 / 30.0));
-        world.insert_resource(Players(vec![crate::model::player::Player {
-            id: 1,
-            username: "p1".into(),
-            gold: 100,
-        }]));
+        world.insert_resource(Players(vec![crate::model::player::Player::new(
+            1,
+            "p1".into(),
+            100,
+        )]));
 
         let (tx, _rx) = tokio::sync::broadcast::channel::<String>(16);
         world.insert_resource(NetworkChannel(tx));
@@ -749,6 +754,456 @@ mod tests {
         assert!(
             after_pos.y < initial_pos.y || after_pos.x != initial_pos.x,
             "Worker should move during Build phase via the schedule"
+        );
+    }
+
+    // --- Task 3.2: Offensive unit spawning ---
+
+    #[test]
+    fn queued_units_spawn_on_opponent_board_at_combat_start() {
+        use crate::model::components::{Bounty, Enemy};
+        use crate::model::constants::{BOARD_SIZE, RIGHT_BOARD_START};
+        use crate::model::shape::Shape;
+        use crate::model::unit_config::{SENT_SQUARE_BOUNTY, get_sent_unit_profile};
+
+        let mut lobby = Lobby::new();
+        lobby.players.push(Player::new(1, "p1".into(), 100));
+        lobby.players.push(Player::new(2, "p2".into(), 100));
+
+        // Player 0 queues a Square to send to Player 1's board.
+        lobby.players[0].spawning_queue.push(Shape::Square);
+
+        let spawn_x_left = BOARD_SIZE / 2.0;
+        let spawn_x_right = RIGHT_BOARD_START + (BOARD_SIZE / 2.0);
+
+        // Simulate the queue draining logic from run_game_loop.
+        let queues: Vec<Vec<Shape>> = lobby
+            .players
+            .iter()
+            .map(|p| p.spawning_queue.clone())
+            .collect();
+        for (player_idx, queue) in queues.iter().enumerate() {
+            let opponent_x = if player_idx == 0 {
+                spawn_x_right
+            } else {
+                spawn_x_left
+            };
+            for &shape in queue {
+                let sent_profile = get_sent_unit_profile(shape);
+                crate::handler::spawn::spawn_sent_enemy(
+                    &mut lobby.game_state.world,
+                    Position {
+                        x: opponent_x,
+                        y: 30.0,
+                    },
+                    shape,
+                    lobby.game_state.wave_number,
+                    sent_profile.bounty,
+                );
+            }
+        }
+        for player in &mut lobby.players {
+            player.spawning_queue.clear();
+        }
+
+        // Sent enemy should be on the right board (opponent of player 0).
+        let mut query = lobby
+            .game_state
+            .world
+            .query::<(&Enemy, &Position, &Bounty)>();
+        let enemies: Vec<_> = query.iter(&lobby.game_state.world).collect();
+        assert_eq!(enemies.len(), 1, "One sent unit should be spawned");
+        assert!(
+            enemies[0].1.x >= RIGHT_BOARD_START,
+            "Sent unit should spawn on the opponent's (right) board"
+        );
+        assert_eq!(
+            enemies[0].2.0, SENT_SQUARE_BOUNTY,
+            "Sent unit should carry the correct bounty"
+        );
+
+        // Queue must be cleared.
+        assert!(
+            lobby.players[0].spawning_queue.is_empty(),
+            "Spawning queue should be cleared after combat starts"
+        );
+    }
+
+    #[test]
+    fn both_players_queues_spawn_on_each_others_boards() {
+        use crate::model::components::{Bounty, Enemy};
+        use crate::model::constants::{BOARD_SIZE, RIGHT_BOARD_START};
+        use crate::model::shape::Shape;
+        use crate::model::unit_config::get_sent_unit_profile;
+
+        let mut lobby = Lobby::new();
+        lobby.players.push(Player::new(1, "p1".into(), 100));
+        lobby.players.push(Player::new(2, "p2".into(), 100));
+
+        lobby.players[0].spawning_queue.push(Shape::Square); // Player 0 → right board
+        lobby.players[1].spawning_queue.push(Shape::Triangle); // Player 1 → left board
+
+        let spawn_x_left = BOARD_SIZE / 2.0;
+        let spawn_x_right = RIGHT_BOARD_START + (BOARD_SIZE / 2.0);
+
+        let queues: Vec<Vec<Shape>> = lobby
+            .players
+            .iter()
+            .map(|p| p.spawning_queue.clone())
+            .collect();
+        for (player_idx, queue) in queues.iter().enumerate() {
+            let opponent_x = if player_idx == 0 {
+                spawn_x_right
+            } else {
+                spawn_x_left
+            };
+            for &shape in queue {
+                let sent_profile = get_sent_unit_profile(shape);
+                crate::handler::spawn::spawn_sent_enemy(
+                    &mut lobby.game_state.world,
+                    Position {
+                        x: opponent_x,
+                        y: 30.0,
+                    },
+                    shape,
+                    lobby.game_state.wave_number,
+                    sent_profile.bounty,
+                );
+            }
+        }
+        for player in &mut lobby.players {
+            player.spawning_queue.clear();
+        }
+
+        let mut query = lobby
+            .game_state
+            .world
+            .query::<(&Enemy, &Position, &Bounty)>();
+        let enemies: Vec<_> = query.iter(&lobby.game_state.world).collect();
+        assert_eq!(enemies.len(), 2, "Two sent units should be spawned");
+
+        let right_board_enemies = enemies
+            .iter()
+            .filter(|(_, p, _)| p.x >= RIGHT_BOARD_START)
+            .count();
+        let left_board_enemies = enemies.iter().filter(|(_, p, _)| p.x < BOARD_SIZE).count();
+        assert_eq!(
+            right_board_enemies, 1,
+            "Player 0's unit should be on right board"
+        );
+        assert_eq!(
+            left_board_enemies, 1,
+            "Player 1's unit should be on left board"
+        );
+
+        assert!(lobby.players[0].spawning_queue.is_empty());
+        assert!(lobby.players[1].spawning_queue.is_empty());
+    }
+
+    // --- Task 5.1: End-to-end unit sending flow ---
+
+    /// Traces a complete purchase: gold deducted, income increases, unit queued,
+    /// then spawns on the opponent's board alongside the regular wave at combat start,
+    /// and the queue is fully drained afterwards.
+    #[test]
+    fn test_send_unit_end_to_end_flow() {
+        use crate::model::components::{Bounty, Enemy};
+        use crate::model::constants::{BOARD_SIZE, RIGHT_BOARD_START};
+        use crate::model::shape::Shape;
+        use crate::model::unit_config::{
+            SENT_SQUARE_BOUNTY, SENT_SQUARE_COST, SENT_SQUARE_INCOME, get_sent_unit_profile,
+        };
+
+        let mut lobby = Lobby::new();
+        lobby.players.push(Player::new(1, "p1".into(), 100));
+        lobby.players.push(Player::new(2, "p2".into(), 100));
+
+        // --- STEP 1: Player 0 purchases a Square sent unit ---
+        let shape = Shape::Square;
+        let profile = get_sent_unit_profile(shape);
+        assert!(lobby.players[0].try_spend_gold(profile.send_cost));
+        lobby.players[0].spawning_queue.push(shape);
+        lobby.players[0].income += profile.income;
+
+        // Verify purchase atomicity
+        assert_eq!(
+            lobby.players[0].gold,
+            100 - SENT_SQUARE_COST,
+            "Gold deducted"
+        );
+        assert_eq!(
+            lobby.players[0].income, SENT_SQUARE_INCOME,
+            "Income increased"
+        );
+        assert_eq!(lobby.players[0].spawning_queue.len(), 1, "Unit queued");
+        assert_eq!(lobby.players[0].spawning_queue[0], Shape::Square);
+
+        // --- STEP 2: Combat transition — regular wave + queue drain ---
+        let spawn_x_left = BOARD_SIZE / 2.0;
+        let spawn_x_right = RIGHT_BOARD_START + (BOARD_SIZE / 2.0);
+
+        // Spawn regular wave on both boards
+        let wave_config = crate::handler::wave::get_wave_config(lobby.game_state.wave_number);
+        for x in [spawn_x_left, spawn_x_right] {
+            for &wave_shape in &wave_config.enemies {
+                crate::handler::spawn::spawn_enemy(
+                    &mut lobby.game_state.world,
+                    Position { x, y: 30.0 },
+                    wave_shape,
+                    lobby.game_state.wave_number,
+                );
+            }
+        }
+
+        // Drain each player's spawning queue to the opponent's board
+        let queues: Vec<Vec<Shape>> = lobby
+            .players
+            .iter()
+            .map(|p| p.spawning_queue.clone())
+            .collect();
+        for (player_idx, queue) in queues.iter().enumerate() {
+            let opponent_x = if player_idx == 0 {
+                spawn_x_right
+            } else {
+                spawn_x_left
+            };
+            for &q_shape in queue {
+                let sent_profile = get_sent_unit_profile(q_shape);
+                crate::handler::spawn::spawn_sent_enemy(
+                    &mut lobby.game_state.world,
+                    Position {
+                        x: opponent_x,
+                        y: 30.0,
+                    },
+                    q_shape,
+                    lobby.game_state.wave_number,
+                    sent_profile.bounty,
+                );
+            }
+        }
+        for player in &mut lobby.players {
+            player.spawning_queue.clear();
+        }
+
+        // --- STEP 3: Verify post-combat-start state ---
+
+        // Queue must be fully cleared
+        assert!(lobby.players[0].spawning_queue.is_empty(), "Queue drained");
+        assert!(
+            lobby.players[1].spawning_queue.is_empty(),
+            "Opponent queue unchanged"
+        );
+
+        // Sent unit must be on the opponent's (right) board with correct bounty
+        let mut sent_query = lobby
+            .game_state
+            .world
+            .query::<(&Enemy, &Position, &Bounty)>();
+        let bounty_enemies: Vec<_> = sent_query.iter(&lobby.game_state.world).collect();
+        assert_eq!(bounty_enemies.len(), 1, "Exactly one sent unit spawned");
+        assert!(
+            bounty_enemies[0].1.x >= RIGHT_BOARD_START,
+            "Sent unit must spawn on opponent's right board"
+        );
+        assert_eq!(
+            bounty_enemies[0].2.0, SENT_SQUARE_BOUNTY,
+            "Sent unit carries correct bounty"
+        );
+
+        // Regular wave enemies must also be present
+        let total_enemies = lobby
+            .game_state
+            .world
+            .query::<&Enemy>()
+            .iter(&lobby.game_state.world)
+            .count();
+        assert!(
+            total_enemies > 1,
+            "Regular wave enemies must coexist with sent unit"
+        );
+    }
+
+    // --- Task 5.2: Targeted unit-test coverage ---
+
+    /// Verifies income accumulates across multiple purchases and is awarded at wave end.
+    #[test]
+    fn task_5_2_income_accumulates_and_awards_at_wave_end() {
+        use crate::model::shape::Shape;
+        use crate::model::unit_config::{
+            SENT_SQUARE_INCOME, SENT_TRIANGLE_INCOME, get_sent_unit_profile,
+        };
+
+        let mut lobby = Lobby::new();
+        lobby.game_state.phase = GamePhase::Combat;
+        lobby.game_state.wave_number = 1;
+        lobby.players.push(Player::new(1, "p1".into(), 200));
+
+        // Simulate two purchases accumulating income
+        let sq = get_sent_unit_profile(Shape::Square);
+        lobby.players[0].try_spend_gold(sq.send_cost);
+        lobby.players[0].income += sq.income;
+        let tr = get_sent_unit_profile(Shape::Triangle);
+        lobby.players[0].try_spend_gold(tr.send_cost);
+        lobby.players[0].income += tr.income;
+
+        assert_eq!(
+            lobby.players[0].income,
+            SENT_SQUARE_INCOME + SENT_TRIANGLE_INCOME,
+            "Income should accumulate across purchases"
+        );
+
+        // Wave ends — award base bonus + accumulated income
+        if lobby.game_state.phase == GamePhase::Combat
+            && check_wave_cleared(&mut lobby.game_state.world)
+        {
+            if lobby.game_state.wave_number < 6 {
+                lobby.game_state.phase = GamePhase::Build;
+                lobby.game_state.wave_number += 1;
+                lobby.game_state.phase_timer = 30.0;
+                for player in &mut lobby.players {
+                    player.gold += 50;
+                    player.gold += player.income;
+                }
+            }
+        }
+
+        let expected =
+            200 - sq.send_cost - tr.send_cost + 50 + SENT_SQUARE_INCOME + SENT_TRIANGLE_INCOME;
+        assert_eq!(
+            lobby.players[0].gold, expected,
+            "Gold should include base wave bonus plus accumulated income"
+        );
+    }
+
+    /// Verifies the spawning queue is fully drained after combat begins,
+    /// including when multiple units were queued.
+    #[test]
+    fn task_5_2_spawning_queue_fully_drained_after_combat() {
+        use crate::model::constants::{BOARD_SIZE, RIGHT_BOARD_START};
+        use crate::model::shape::Shape;
+        use crate::model::unit_config::get_sent_unit_profile;
+
+        let mut lobby = Lobby::new();
+        lobby.players.push(Player::new(1, "p1".into(), 200));
+        lobby.players.push(Player::new(2, "p2".into(), 200));
+
+        // Queue three units for player 0
+        lobby.players[0].spawning_queue.push(Shape::Square);
+        lobby.players[0].spawning_queue.push(Shape::Triangle);
+        lobby.players[0].spawning_queue.push(Shape::Circle);
+        assert_eq!(lobby.players[0].spawning_queue.len(), 3);
+
+        // Simulate queue drain
+        let spawn_x_right = RIGHT_BOARD_START + (BOARD_SIZE / 2.0);
+        let queues: Vec<Vec<Shape>> = lobby
+            .players
+            .iter()
+            .map(|p| p.spawning_queue.clone())
+            .collect();
+        for (player_idx, queue) in queues.iter().enumerate() {
+            let opponent_x = if player_idx == 0 {
+                spawn_x_right
+            } else {
+                BOARD_SIZE / 2.0
+            };
+            for &shape in queue {
+                let sent_profile = get_sent_unit_profile(shape);
+                crate::handler::spawn::spawn_sent_enemy(
+                    &mut lobby.game_state.world,
+                    Position {
+                        x: opponent_x,
+                        y: 30.0,
+                    },
+                    shape,
+                    1,
+                    sent_profile.bounty,
+                );
+            }
+        }
+        for player in &mut lobby.players {
+            player.spawning_queue.clear();
+        }
+
+        // All three units spawned on the right board
+        let spawned = lobby
+            .game_state
+            .world
+            .query::<&crate::model::components::Enemy>()
+            .iter(&lobby.game_state.world)
+            .count();
+        assert_eq!(spawned, 3, "All three queued units must spawn");
+
+        // Queue must be completely empty
+        assert!(
+            lobby.players[0].spawning_queue.is_empty(),
+            "Queue must be fully drained"
+        );
+    }
+
+    // --- Task 2.1: Income distribution ---
+
+    #[test]
+    fn test_income_awarded_at_wave_end() {
+        let mut lobby = Lobby::new();
+        lobby.game_state.phase = GamePhase::Combat;
+        lobby.game_state.wave_number = 1;
+        lobby.players.push(Player::new(1, "p1".into(), 100));
+        lobby.players.push(Player::new(2, "p2".into(), 100));
+        lobby.players[0].income = 5;
+        lobby.players[1].income = 3;
+
+        // Wave is clear; simulate the phase transition logic from run_game_loop.
+        if lobby.game_state.phase == GamePhase::Combat
+            && check_wave_cleared(&mut lobby.game_state.world)
+        {
+            if lobby.game_state.wave_number >= 6 {
+                lobby.game_state.phase = GamePhase::Victory;
+            } else {
+                lobby.game_state.phase = GamePhase::Build;
+                lobby.game_state.wave_number += 1;
+                lobby.game_state.phase_timer = 30.0;
+                for player in &mut lobby.players {
+                    player.gold += 50;
+                    player.gold += player.income;
+                }
+            }
+        }
+
+        assert_eq!(
+            lobby.players[0].gold, 155,
+            "Player 1 should receive 50 base + 5 income = 155 total"
+        );
+        assert_eq!(
+            lobby.players[1].gold, 153,
+            "Player 2 should receive 50 base + 3 income = 153 total"
+        );
+    }
+
+    #[test]
+    fn test_income_zero_does_not_affect_wave_bonus() {
+        let mut lobby = Lobby::new();
+        lobby.game_state.phase = GamePhase::Combat;
+        lobby.game_state.wave_number = 1;
+        lobby.players.push(Player::new(1, "p1".into(), 100));
+        // income defaults to 0
+
+        if lobby.game_state.phase == GamePhase::Combat
+            && check_wave_cleared(&mut lobby.game_state.world)
+        {
+            if lobby.game_state.wave_number < 6 {
+                lobby.game_state.phase = GamePhase::Build;
+                lobby.game_state.wave_number += 1;
+                lobby.game_state.phase_timer = 30.0;
+                for player in &mut lobby.players {
+                    player.gold += 50;
+                    player.gold += player.income;
+                }
+            }
+        }
+
+        assert_eq!(
+            lobby.players[0].gold, 150,
+            "Player with 0 income should only receive 50 base wave bonus"
         );
     }
 

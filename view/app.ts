@@ -1,5 +1,6 @@
 import { AnimationManager, DamageType, Position } from './animations';
 import { UnitInfoPanel } from './unit_info_panel';
+import { MercenaryPanel } from './mercenary_panel';
 
 // --- TYPES & INTERFACES ---
 interface Unit {
@@ -35,12 +36,15 @@ type ClientMessagePayload =
     | { action: 'skipToCombat' }
     | { action: 'leaveLobby' }
     | { action: 'hireWorker'; payload: Record<string, never> }
-    | { action: 'requestUnitInfo'; payload: { entity_id: number } };
+    | { action: 'requestUnitInfo'; payload: { entity_id: number } }
+    | { action: 'sendUnit'; payload: { shape: string } };
 
 interface Player {
     id: number;
     username: string;
     gold: number;
+    income: number;
+    spawning_queue: ('Square' | 'Circle' | 'Triangle')[];
 }
 
 interface GameState {
@@ -94,6 +98,10 @@ const GAP_SIZE = 200;
 const LEFT_BOARD_END = 600;
 const RIGHT_BOARD_START = 800;
 
+const MERC_BUILDING_X = LEFT_BOARD_END + GAP_SIZE / 2;  // 700
+const MERC_BUILDING_Y = [150, 450] as const;
+const MERC_BUILDING_HALF = 18;
+
 let selectedShape: 'Square' | 'Circle' | 'Triangle' = 'Square';
 let gameState: Unit[] = [];
 let currentPlayers: Player[] = [];
@@ -111,6 +119,17 @@ const panel = new UnitInfoPanel(
         onSell: (entityId: number) => {
             if (socket && socket.readyState === WebSocket.OPEN) {
                 socket.send(JSON.stringify({ action: 'sellById', payload: { entity_id: entityId } }));
+            }
+        },
+    }
+);
+
+const mercPanel = new MercenaryPanel(
+    document.getElementById('mercenary-panel') as HTMLElement,
+    {
+        onSend: (shape) => {
+            if (socket && socket.readyState === WebSocket.OPEN) {
+                socket.send(JSON.stringify({ action: 'sendUnit', payload: { shape } }));
             }
         },
     }
@@ -387,7 +406,12 @@ function updateGameState(newState: GameState) {
     if (newState.players) {
         currentPlayers = newState.players;
         const me = newState.players.find(p => p.id === myPlayerId);
-        if (me) goldDisplay.textContent = me.gold.toString();
+        if (me) {
+            goldDisplay.textContent = me.income > 0
+                ? `${me.gold} (+${me.income}/round)`
+                : me.gold.toString();
+            mercPanel.updateGold(me.gold);
+        }
         applyPanelBoardSide();
     }
     gamePhase = newState.phase;
@@ -415,12 +439,55 @@ function handleCombatEvents(events: CombatEvent[]) {
     });
 }
 
+function drawMercenaryBuildings() {
+    currentPlayers.forEach((_player, index) => {
+        const buildingY = MERC_BUILDING_Y[index];
+        const bx = MERC_BUILDING_X - MERC_BUILDING_HALF;
+        const by = buildingY - MERC_BUILDING_HALF;
+        const bSize = MERC_BUILDING_HALF * 2;
+
+        ctx.fillStyle = '#8B0000';
+        ctx.fillRect(bx, by, bSize, bSize);
+
+        ctx.strokeStyle = '#FFD700';
+        ctx.lineWidth = 2;
+        ctx.strokeRect(bx, by, bSize, bSize);
+
+        ctx.fillStyle = '#FFD700';
+        ctx.font = 'bold 9px Arial';
+        ctx.textAlign = 'center';
+        ctx.fillText('⚔', MERC_BUILDING_X, buildingY - 2);
+        ctx.font = '8px Arial';
+        ctx.fillText('Merc', MERC_BUILDING_X, buildingY + 9);
+        ctx.textAlign = 'left';
+    });
+}
+
+function drawSpawningGrounds() {
+    currentPlayers.forEach((player, index) => {
+        if (!player.spawning_queue || player.spawning_queue.length === 0) return;
+        const groundY = MERC_BUILDING_Y[index] + MERC_BUILDING_HALF + 14;
+        const startX = MERC_BUILDING_X - (player.spawning_queue.length * 12) / 2;
+
+        player.spawning_queue.forEach((shape, i) => {
+            const iconX = startX + i * 14;
+            const radius = shape === 'Circle' ? 8 : shape === 'Triangle' ? 6 : 4;
+            ctx.fillStyle = '#FFA500';
+            ctx.beginPath();
+            ctx.arc(iconX, groundY, radius, 0, 2 * Math.PI);
+            ctx.fill();
+        });
+    });
+}
+
 function render() {
     if (isInGame) {
         ctx.clearRect(0, 0, canvas.width, canvas.height);
         drawCheckerboard();
         drawWorkerArea();
         drawUnits(gameState);
+        drawMercenaryBuildings();
+        drawSpawningGrounds();
 
         animationManager.update();
         animationManager.draw(ctx);
@@ -462,6 +529,19 @@ canvas.addEventListener('click', function (event) {
     }
 
     if (boardIdx === null) {
+        // Check if a Mercenary Building was clicked (gap area)
+        if (clickX >= LEFT_BOARD_END && clickX < RIGHT_BOARD_START && myPlayerId !== null) {
+            const myIndex = currentPlayers.findIndex(p => p.id === myPlayerId);
+            if (myIndex !== -1) {
+                const buildingY = MERC_BUILDING_Y[myIndex];
+                const dx = clickX - MERC_BUILDING_X;
+                const dy = clickY - buildingY;
+                if (dx * dx + dy * dy <= MERC_BUILDING_HALF * MERC_BUILDING_HALF) {
+                    mercPanel.toggle();
+                    return;
+                }
+            }
+        }
         panel.clearSelection();
         return;
     }
@@ -492,6 +572,7 @@ leaveLobbyButton.onclick = () => {
     isInGame = false;
     socket?.send(JSON.stringify({ action: 'leaveLobby' }));
     panel.clearSelection();
+    mercPanel.hide();
     showLobbyView();
 };
 

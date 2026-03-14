@@ -31,6 +31,7 @@ pub enum ClientMessage {
     LeaveLobby,
     HireWorker {},
     RequestUnitInfo { entity_id: u32 },
+    SendUnit { shape: Shape },
 }
 
 #[derive(Serialize, Clone, Debug)]
@@ -89,6 +90,16 @@ pub enum ServerMessage {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn deserialize_send_unit() {
+        let json = r#"{"action": "sendUnit", "payload": {"shape": "Square"}}"#;
+        let msg: ClientMessage = serde_json::from_str(json).unwrap();
+        match msg {
+            ClientMessage::SendUnit { shape } => assert_eq!(shape, Shape::Square),
+            _ => panic!("Wrong message type"),
+        }
+    }
 
     #[test]
     fn deserialize_hire_worker() {

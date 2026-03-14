@@ -103,11 +103,7 @@ mod tests {
     fn setup_world_with_player(player_id: i64) -> World {
         let mut world = World::new();
         world.insert_resource(DeltaTime(1.0 / 30.0));
-        world.insert_resource(Players(vec![Player {
-            id: player_id,
-            username: "test".to_string(),
-            gold: 0,
-        }]));
+        world.insert_resource(Players(vec![Player::new(player_id, "test".to_string(), 0)]));
         world
     }
 
@@ -229,11 +225,7 @@ mod tests {
         for phase in [GamePhase::Build, GamePhase::Combat, GamePhase::Victory] {
             let mut world = World::new();
             world.insert_resource(DeltaTime(1.0 / 30.0));
-            world.insert_resource(Players(vec![Player {
-                id: 1,
-                username: "test".to_string(),
-                gold: 100,
-            }]));
+            world.insert_resource(Players(vec![Player::new(1, "test".to_string(), 100)]));
 
             let initial_pos = Position { x: 700.0, y: 250.0 };
             let targets = TargetPositions {

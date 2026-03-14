@@ -109,6 +109,23 @@ pub async fn in_game_loop(
                                             }
                                         }
                                     }
+                                    ClientMessage::SendUnit { shape } => {
+                                        let player_idx = lobby.players.iter().position(|p| p.id == player_id);
+                                        if let Some(idx) = player_idx {
+                                            let sent_profile = crate::model::unit_config::get_sent_unit_profile(shape);
+                                            if lobby.players[idx].try_spend_gold(sent_profile.send_cost) {
+                                                lobby.players[idx].spawning_queue.push(shape);
+                                                lobby.players[idx].income += sent_profile.income;
+                                                lobby.broadcast_gamestate();
+                                            } else {
+                                                let error_msg = format!(
+                                                    "Insufficient gold for {} (cost: {})",
+                                                    sent_profile.name, sent_profile.send_cost
+                                                );
+                                                let _ = crate::routes::ws::send_message(ws_sender, crate::model::messages::ServerMessage::Error(error_msg)).await;
+                                            }
+                                        }
+                                    }
                                     ClientMessage::LeaveLobby => break InGameLoopResult::PlayerLeft,
                                     ClientMessage::SellById { entity_id } => {
                                         if lobby.game_state.phase != GamePhase::Build {
@@ -214,16 +231,8 @@ mod tests {
 
         let p1_id = 1;
         let p2_id = 2;
-        lobby.players.push(Player {
-            id: p1_id,
-            username: "p1".into(),
-            gold: 100,
-        });
-        lobby.players.push(Player {
-            id: p2_id,
-            username: "p2".into(),
-            gold: 100,
-        });
+        lobby.players.push(Player::new(p1_id, "p1".into(), 100));
+        lobby.players.push(Player::new(p2_id, "p2".into(), 100));
 
         // Player 0 (index 0) is P1. Board is 0-600.
         // Player 1 (index 1) is P2. Board is 800-1400.
@@ -262,11 +271,7 @@ mod tests {
     fn test_unit_placement_deducts_gold() {
         let mut lobby = Lobby::new();
         let player_id = 1;
-        lobby.players.push(Player {
-            id: player_id,
-            username: "p1".into(),
-            gold: 100,
-        });
+        lobby.players.push(Player::new(player_id, "p1".into(), 100));
 
         let p = PlaceMessage {
             shape: Shape::Square,
@@ -303,11 +308,7 @@ mod tests {
     fn test_insufficient_gold_prevents_placement() {
         let mut lobby = Lobby::new();
         let player_id = 1;
-        lobby.players.push(Player {
-            id: player_id,
-            username: "p1".into(),
-            gold: 10,
-        });
+        lobby.players.push(Player::new(player_id, "p1".into(), 10));
 
         let p = PlaceMessage {
             shape: Shape::Square,
@@ -345,11 +346,7 @@ mod tests {
     fn place_rejected_during_combat_phase() {
         let mut lobby = Lobby::new();
         let player_id = 1;
-        lobby.players.push(Player {
-            id: player_id,
-            username: "p1".into(),
-            gold: 100,
-        });
+        lobby.players.push(Player::new(player_id, "p1".into(), 100));
         lobby.game_state.phase = GamePhase::Combat;
 
         let p = PlaceMessage {
@@ -392,11 +389,7 @@ mod tests {
     fn place_accepted_during_build_phase() {
         let mut lobby = Lobby::new();
         let player_id = 1;
-        lobby.players.push(Player {
-            id: player_id,
-            username: "p1".into(),
-            gold: 100,
-        });
+        lobby.players.push(Player::new(player_id, "p1".into(), 100));
         // Default phase is Build
 
         let p = PlaceMessage {
@@ -443,11 +436,7 @@ mod tests {
 
         let mut lobby = Lobby::new();
         let player_id: i64 = 1;
-        lobby.players.push(Player {
-            id: player_id,
-            username: "p1".into(),
-            gold: 100,
-        });
+        lobby.players.push(Player::new(player_id, "p1".into(), 100));
 
         let entity = spawn_unit(
             &mut lobby.game_state.world,
@@ -497,11 +486,7 @@ mod tests {
     fn test_sell_by_id_rejected_in_combat_phase() {
         let mut lobby = Lobby::new();
         let player_id: i64 = 1;
-        lobby.players.push(Player {
-            id: player_id,
-            username: "p1".into(),
-            gold: 100,
-        });
+        lobby.players.push(Player::new(player_id, "p1".into(), 100));
         lobby.game_state.phase = GamePhase::Combat;
 
         let entity = spawn_unit(
@@ -546,16 +531,12 @@ mod tests {
         let mut lobby = Lobby::new();
         let player_1_id: i64 = 1;
         let player_2_id: i64 = 2;
-        lobby.players.push(Player {
-            id: player_1_id,
-            username: "p1".into(),
-            gold: 100,
-        });
-        lobby.players.push(Player {
-            id: player_2_id,
-            username: "p2".into(),
-            gold: 100,
-        });
+        lobby
+            .players
+            .push(Player::new(player_1_id, "p1".into(), 100));
+        lobby
+            .players
+            .push(Player::new(player_2_id, "p2".into(), 100));
 
         let entity = spawn_unit(
             &mut lobby.game_state.world,
@@ -596,11 +577,7 @@ mod tests {
 
         let mut lobby = Lobby::new();
         let player_id: i64 = 1;
-        lobby.players.push(Player {
-            id: player_id,
-            username: "p1".into(),
-            gold: 100,
-        });
+        lobby.players.push(Player::new(player_id, "p1".into(), 100));
 
         let entity = spawn_unit(
             &mut lobby.game_state.world,
@@ -728,11 +705,7 @@ mod tests {
         let mut lobby = Lobby::new();
         let owner_id: i64 = 1;
         let requester_id: i64 = 2;
-        lobby.players.push(Player {
-            id: owner_id,
-            username: "p1".into(),
-            gold: 100,
-        });
+        lobby.players.push(Player::new(owner_id, "p1".into(), 100));
 
         let entity = spawn_unit(
             &mut lobby.game_state.world,
@@ -793,15 +766,104 @@ mod tests {
         );
     }
 
+    // --- Task 3.1: SendUnit handler ---
+
+    #[test]
+    fn send_unit_deducts_gold_queues_unit_and_increases_income() {
+        use crate::model::unit_config::get_sent_unit_profile;
+
+        let mut lobby = Lobby::new();
+        let player_id = 1;
+        lobby.players.push(Player::new(player_id, "p1".into(), 100));
+
+        let shape = Shape::Square;
+        let profile = get_sent_unit_profile(shape);
+
+        // Simulate SendUnit handler
+        let player_idx = lobby.players.iter().position(|p| p.id == player_id);
+        if let Some(idx) = player_idx {
+            if lobby.players[idx].try_spend_gold(profile.send_cost) {
+                lobby.players[idx].spawning_queue.push(shape);
+                lobby.players[idx].income += profile.income;
+            }
+        }
+
+        assert_eq!(
+            lobby.players[0].gold,
+            100 - profile.send_cost,
+            "Gold should be deducted by send cost"
+        );
+        assert_eq!(
+            lobby.players[0].income, profile.income,
+            "Income should be increased by profile income"
+        );
+        assert_eq!(lobby.players[0].spawning_queue.len(), 1);
+        assert_eq!(lobby.players[0].spawning_queue[0], Shape::Square);
+    }
+
+    #[test]
+    fn send_unit_rejected_when_insufficient_gold() {
+        use crate::model::unit_config::get_sent_unit_profile;
+
+        let mut lobby = Lobby::new();
+        let player_id = 1;
+        lobby.players.push(Player::new(player_id, "p1".into(), 3)); // Only 3 gold, Square costs 5
+
+        let shape = Shape::Square;
+        let profile = get_sent_unit_profile(shape);
+
+        let player_idx = lobby.players.iter().position(|p| p.id == player_id);
+        let mut sent = false;
+        if let Some(idx) = player_idx {
+            if lobby.players[idx].try_spend_gold(profile.send_cost) {
+                lobby.players[idx].spawning_queue.push(shape);
+                lobby.players[idx].income += profile.income;
+                sent = true;
+            }
+        }
+
+        assert!(!sent, "Purchase should be rejected");
+        assert_eq!(lobby.players[0].gold, 3, "Gold should not be deducted");
+        assert_eq!(lobby.players[0].income, 0, "Income should not change");
+        assert!(
+            lobby.players[0].spawning_queue.is_empty(),
+            "Queue should remain empty"
+        );
+    }
+
+    #[test]
+    fn send_unit_multiple_purchases_accumulate_income_and_queue() {
+        use crate::model::unit_config::get_sent_unit_profile;
+
+        let mut lobby = Lobby::new();
+        let player_id = 1;
+        lobby.players.push(Player::new(player_id, "p1".into(), 200));
+
+        let square_profile = get_sent_unit_profile(Shape::Square);
+        let triangle_profile = get_sent_unit_profile(Shape::Triangle);
+
+        // Buy a Square (costs 5, income 1)
+        let idx = 0;
+        if lobby.players[idx].try_spend_gold(square_profile.send_cost) {
+            lobby.players[idx].spawning_queue.push(Shape::Square);
+            lobby.players[idx].income += square_profile.income;
+        }
+        // Buy a Triangle (costs 20, income 3)
+        if lobby.players[idx].try_spend_gold(triangle_profile.send_cost) {
+            lobby.players[idx].spawning_queue.push(Shape::Triangle);
+            lobby.players[idx].income += triangle_profile.income;
+        }
+
+        assert_eq!(lobby.players[0].gold, 200 - 5 - 20);
+        assert_eq!(lobby.players[0].income, 1 + 3);
+        assert_eq!(lobby.players[0].spawning_queue.len(), 2);
+    }
+
     #[test]
     fn hire_worker_accepted_during_combat_phase() {
         let mut lobby = Lobby::new();
         let player_id = 1;
-        lobby.players.push(Player {
-            id: player_id,
-            username: "p1".into(),
-            gold: 100,
-        });
+        lobby.players.push(Player::new(player_id, "p1".into(), 100));
         lobby.game_state.phase = GamePhase::Combat;
 
         // Simulate HireWorker handler (no phase guard)

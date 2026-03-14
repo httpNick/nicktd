@@ -1,10 +1,11 @@
 use crate::model::components::{
-    AttackRange, AttackStats, AttackTimer, CollisionRadius, CombatProfile, Dead, Enemy, Health,
-    HomePosition, InAttackRange, Mana, Position, Target, Worker,
+    AttackRange, AttackStats, AttackTimer, Bounty, CollisionRadius, CombatProfile, Dead, Enemy,
+    Health, HomePosition, InAttackRange, Mana, Position, Target, Worker,
 };
 use crate::model::constants::{LEFT_BOARD_END, RIGHT_BOARD_END, RIGHT_BOARD_START, TOTAL_HEIGHT};
 use crate::model::game_state::DeltaTime;
 use crate::model::messages::CombatEvent;
+use crate::model::player::Players;
 use bevy_ecs::message::Messages;
 use bevy_ecs::prelude::{Entity, Query, Res, With, Without, World};
 
@@ -27,6 +28,14 @@ pub fn update_targeting(world: &mut World) {
         let mut query = world.query::<(Entity, &Target, &Position)>();
         for (entity, target, pos) in query.iter(world) {
             if !world.entities().contains(target.0) {
+                to_remove.push(entity);
+                continue;
+            }
+
+            // Remove target if the target entity is dead (tagged Dead, not despawned).
+            // Enemies that were targeting a Dead tower would otherwise keep the stale
+            // target indefinitely, lose InAttackRange, and stop attacking.
+            if world.get::<Dead>(target.0).is_some() {
                 to_remove.push(entity);
                 continue;
             }
@@ -451,21 +460,38 @@ pub fn process_combat(world: &mut World) {
 }
 
 pub fn cleanup_dead_entities(world: &mut World) {
-    let mut enemies_to_despawn = Vec::new();
+    // Collect dead entities: enemies get despawned (capturing any bounty info),
+    // non-enemies (towers/units) get tagged Dead.
+    let mut enemies_to_despawn: Vec<(Entity, Option<Bounty>, Option<u8>)> = Vec::new();
     let mut towers_to_tag = Vec::new();
 
-    let mut query = world.query::<(Entity, &Health)>();
-    for (entity, health) in query.iter(world) {
-        if health.current <= 0.0 {
-            if world.get::<Enemy>(entity).is_some() {
-                enemies_to_despawn.push(entity);
-            } else {
-                towers_to_tag.push(entity);
+    {
+        let mut query = world.query::<(Entity, &Health)>();
+        for (entity, health) in query.iter(world) {
+            if health.current <= 0.0 {
+                if world.get::<Enemy>(entity).is_some() {
+                    let bounty = world.get::<Bounty>(entity).copied();
+                    let board = world.get::<Position>(entity).and_then(|p| get_board(p.x));
+                    enemies_to_despawn.push((entity, bounty, board));
+                } else {
+                    towers_to_tag.push(entity);
+                }
             }
         }
     }
 
-    for entity in enemies_to_despawn {
+    // Award bounty gold to the defending player before despawning.
+    if let Some(mut players) = world.get_resource_mut::<Players>() {
+        for (_, bounty, board) in &enemies_to_despawn {
+            if let (Some(b), Some(board_idx)) = (bounty, board) {
+                if let Some(player) = players.0.get_mut(*board_idx as usize) {
+                    player.gold += b.0;
+                }
+            }
+        }
+    }
+
+    for (entity, _, _) in enemies_to_despawn {
         world.despawn(entity);
     }
 
@@ -1901,6 +1927,114 @@ mod tests {
         assert!(
             pos.x > 100.0,
             "Unit should move towards enemy using DeltaTime from resource"
+        );
+    }
+
+    // --- Task 2.2: Bounty reward mechanics ---
+
+    #[test]
+    fn bounty_awarded_to_left_board_defender_on_kill() {
+        use crate::model::components::{Bounty, Enemy, Health};
+        use crate::model::player::{Player, Players};
+        use bevy_ecs::prelude::World;
+
+        let mut world = World::new();
+
+        let player1 = Player::new(1, "p1".into(), 100);
+        let player2 = Player::new(2, "p2".into(), 100);
+        world.insert_resource(Players(vec![player1, player2]));
+
+        // Enemy at 0 HP with a bounty on the left board (board 0 → players[0] defends)
+        world.spawn((
+            Health {
+                current: 0.0,
+                max: 50.0,
+            },
+            Enemy,
+            Position { x: 100.0, y: 30.0 },
+            Bounty(20),
+        ));
+
+        cleanup_dead_entities(&mut world);
+
+        let players = world.resource::<Players>();
+        assert_eq!(
+            players.0[0].gold, 120,
+            "Left board defender should receive 20 bounty gold"
+        );
+        assert_eq!(
+            players.0[1].gold, 100,
+            "Right board defender should not receive bounty gold"
+        );
+    }
+
+    #[test]
+    fn bounty_awarded_to_right_board_defender_on_kill() {
+        use crate::model::components::{Bounty, Enemy, Health};
+        use crate::model::constants::RIGHT_BOARD_START;
+        use crate::model::player::{Player, Players};
+        use bevy_ecs::prelude::World;
+
+        let mut world = World::new();
+
+        let player1 = Player::new(1, "p1".into(), 100);
+        let player2 = Player::new(2, "p2".into(), 100);
+        world.insert_resource(Players(vec![player1, player2]));
+
+        // Enemy at 0 HP with a bounty on the right board (board 1 → players[1] defends)
+        world.spawn((
+            Health {
+                current: 0.0,
+                max: 50.0,
+            },
+            Enemy,
+            Position {
+                x: RIGHT_BOARD_START + 100.0,
+                y: 30.0,
+            },
+            Bounty(10),
+        ));
+
+        cleanup_dead_entities(&mut world);
+
+        let players = world.resource::<Players>();
+        assert_eq!(
+            players.0[0].gold, 100,
+            "Left board defender should not receive bounty gold"
+        );
+        assert_eq!(
+            players.0[1].gold, 110,
+            "Right board defender should receive 10 bounty gold"
+        );
+    }
+
+    #[test]
+    fn non_bounty_enemies_award_no_gold() {
+        use crate::model::components::{Enemy, Health};
+        use crate::model::player::{Player, Players};
+        use bevy_ecs::prelude::World;
+
+        let mut world = World::new();
+
+        let player1 = Player::new(1, "p1".into(), 100);
+        world.insert_resource(Players(vec![player1]));
+
+        // Regular enemy at 0 HP without a Bounty component
+        world.spawn((
+            Health {
+                current: 0.0,
+                max: 50.0,
+            },
+            Enemy,
+            Position { x: 100.0, y: 30.0 },
+        ));
+
+        cleanup_dead_entities(&mut world);
+
+        let players = world.resource::<Players>();
+        assert_eq!(
+            players.0[0].gold, 100,
+            "Regular enemy kill should award no bounty gold"
         );
     }
 }

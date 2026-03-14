@@ -204,11 +204,7 @@ mod tests {
     #[test]
     fn broadcast_gamestate_includes_players_and_gold() {
         let mut lobby = Lobby::new();
-        lobby.players.push(Player {
-            id: 1,
-            username: "test".to_string(),
-            gold: 100,
-        });
+        lobby.players.push(Player::new(1, "test".to_string(), 100));
 
         let mut rx = lobby.tx.subscribe();
         lobby.broadcast_gamestate();

@@ -41,6 +41,24 @@
         .stat-row { display: flex; justify-content: space-between; gap: 8px; font-size: 0.85em; }
         .boss-row { color: #ff6600; font-weight: bold; }
         .panel-abilities { min-width: 90px; display: flex; flex-direction: column; gap: 6px; align-items: flex-start; }
+        #mercenary-panel {
+            background-color: rgba(0, 0, 0, 0.85);
+            border: 2px solid #8B0000;
+            padding: 10px 14px;
+            margin-top: 8px;
+            width: 700px;
+            box-sizing: border-box;
+        }
+        .merc-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
+        .merc-header span { font-size: 1.1em; font-weight: bold; color: #FFD700; }
+        .merc-unit-list { display: flex; flex-direction: column; gap: 6px; }
+        .merc-unit-row { display: flex; align-items: center; gap: 12px; font-size: 0.9em; }
+        .merc-unit-name { min-width: 90px; font-weight: bold; }
+        .merc-unit-cost { min-width: 40px; color: #FFD700; }
+        .merc-unit-income { min-width: 80px; color: #7FFF00; }
+        .merc-send-btn { margin: 0; padding: 0 10px; height: 28px; background: #8B0000; color: #fff; border: none; border-radius: 3px; cursor: pointer; font-size: 0.85em; }
+        .merc-send-btn:hover { background: #a00; }
+        .merc-send-btn[data-unaffordable="true"] { opacity: 0.4; cursor: not-allowed; pointer-events: none; }
     </style>
 </head>
 <body>
@@ -101,6 +119,13 @@
             <button id="leave-lobby">Leave Lobby</button>
         </div>
         <canvas id="gameCanvas" width="1400" height="600"></canvas>
+        <div id="mercenary-panel">
+            <div class="merc-header">
+                <span>⚔ Send Units</span>
+                <button data-merc="close-btn" class="btn btn-small red lighten-2">Close</button>
+            </div>
+            <div data-merc="unit-list" class="merc-unit-list"></div>
+        </div>
         <div id="ui-panel">
             <!-- Portrait section -->
             <div class="panel-portrait">
