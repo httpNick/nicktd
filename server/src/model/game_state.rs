@@ -7,6 +7,7 @@ pub enum GamePhase {
     Build,
     Combat,
     Victory,
+    GameOver,
 }
 
 /// ECS Resource tracking the remaining time in the current phase (seconds).
@@ -81,6 +82,15 @@ mod tests {
         match phase {
             GamePhase::Victory => (),
             _ => panic!("Should have Victory variant"),
+        }
+    }
+
+    #[test]
+    fn test_game_phase_game_over_variant() {
+        let phase = GamePhase::GameOver;
+        match phase {
+            GamePhase::GameOver => (),
+            _ => panic!("Should have GameOver variant"),
         }
     }
 

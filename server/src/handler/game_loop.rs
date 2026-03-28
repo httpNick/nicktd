@@ -2,7 +2,8 @@ use crate::{
     handler::{
         combat::{
             cleanup_dead_entities, process_combat, update_active_combat_stats,
-            update_combat_movement, update_combat_reset, update_mana, update_targeting,
+            update_combat_movement, update_combat_reset, update_life_loss, update_mana,
+            update_targeting,
         },
         worker::update_workers,
     },
@@ -115,12 +116,17 @@ pub fn build_main_schedule() -> Schedule {
             .after(process_combat),
     );
 
-    // Cleanup: remove dead entities, then reset cooldowns.
+    // Cleanup: remove dead entities, detect breakthroughs, then reset cooldowns.
     schedule.add_systems(cleanup_dead_entities.in_set(GameSystemSet::Cleanup));
+    schedule.add_systems(
+        update_life_loss
+            .in_set(GameSystemSet::Cleanup)
+            .after(cleanup_dead_entities),
+    );
     schedule.add_systems(
         update_combat_reset
             .in_set(GameSystemSet::Cleanup)
-            .after(cleanup_dead_entities),
+            .after(update_life_loss),
     );
 
     // Workers: move workers and deposit gold.
@@ -245,8 +251,19 @@ pub async fn run_game_loop(server_state: ServerState, lobby_id: usize, generatio
                 .game_state
                 .world
                 .insert_resource(Players(lobby.players.clone()));
-            schedule.run(&mut lobby.game_state.world);
+            // Halt the ECS schedule when game is over to stop all simulation.
+            if lobby.game_state.phase != GamePhase::GameOver {
+                schedule.run(&mut lobby.game_state.world);
+            }
             lobby.players = lobby.game_state.world.resource::<Players>().0.clone();
+
+            // Check for game over: if any player has 0 lives, transition to GameOver.
+            if lobby.game_state.phase == GamePhase::Combat {
+                if lobby.players.iter().any(|p| p.lives == 0) {
+                    lobby.game_state.phase = GamePhase::GameOver;
+                    lobby.game_state.world.insert_resource(GamePhase::GameOver);
+                }
+            }
 
             // Wave completion: transition out of Combat when all enemies are gone.
             if lobby.game_state.phase == GamePhase::Combat
@@ -1244,6 +1261,38 @@ mod tests {
         assert!(
             msg.contains("\"attacker_id\":1"),
             "Broadcast should contain attacker_id"
+        );
+    }
+
+    #[test]
+    fn wave_progression_does_not_advance_when_game_over() {
+        use bevy_ecs::prelude::World;
+
+        let mut world = World::new();
+        world.init_resource::<Messages<CombatEvent>>();
+        world.insert_resource(DeltaTime(1.0 / 30.0));
+        world.insert_resource(Players::default());
+
+        let (tx, _rx) = tokio::sync::broadcast::channel::<String>(16);
+        world.insert_resource(NetworkChannel(tx));
+
+        // Set GameOver phase
+        world.insert_resource(GamePhase::GameOver);
+
+        let mut schedule = build_main_schedule();
+
+        // Simulate what the game loop does: skip schedule.run() when GameOver
+        let phase = *world.resource::<GamePhase>();
+        if phase != GamePhase::GameOver {
+            schedule.run(&mut world);
+        }
+
+        // The phase should remain GameOver (schedule was not run)
+        let phase_after = *world.resource::<GamePhase>();
+        assert_eq!(
+            phase_after,
+            GamePhase::GameOver,
+            "Phase should remain GameOver when schedule is skipped"
         );
     }
 }

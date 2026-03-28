@@ -2,7 +2,9 @@ use crate::model::components::{
     AttackRange, AttackStats, AttackTimer, Bounty, CollisionRadius, CombatProfile, Dead, Enemy,
     Health, HomePosition, InAttackRange, Mana, Position, Target, Worker,
 };
-use crate::model::constants::{LEFT_BOARD_END, RIGHT_BOARD_END, RIGHT_BOARD_START, TOTAL_HEIGHT};
+use crate::model::constants::{
+    LEFT_BOARD_END, RIGHT_BOARD_END, RIGHT_BOARD_START, SQUARE_SIZE, TOTAL_HEIGHT,
+};
 use crate::model::game_state::DeltaTime;
 use crate::model::messages::CombatEvent;
 use crate::model::player::Players;
@@ -151,8 +153,11 @@ pub fn update_combat_movement(world: &mut World) {
         Option<&Target>,
         Option<&AttackRange>,
         &CollisionRadius,
+        Option<&Enemy>,
     ), (Without<Worker>, Without<Dead>)>();
-    for (entity, pos, target_opt, attack_range_opt, collision_radius) in query.iter(world) {
+    for (entity, pos, target_opt, attack_range_opt, collision_radius, enemy_opt) in
+        query.iter(world)
+    {
         let mut velocity_x = 0.0;
         let mut velocity_y = 0.0;
 
@@ -180,6 +185,10 @@ pub fn update_combat_movement(world: &mut World) {
                 combat_markers.push((entity, false)); // No target found
             }
         } else {
+            // No target: enemies drift downward towards the opponent's base
+            if enemy_opt.is_some() {
+                velocity_y += SPEED;
+            }
             combat_markers.push((entity, false)); // No target assigned
         }
 
@@ -500,6 +509,42 @@ pub fn cleanup_dead_entities(world: &mut World) {
     }
 }
 
+/// System: detects enemies that have broken through the bottom boundary, decrements
+/// the defending player's lives (clamped at 0), and despawns the entity.
+pub fn update_life_loss(world: &mut World) {
+    let breakthrough_threshold = TOTAL_HEIGHT - SQUARE_SIZE;
+
+    // Collect breakthrough enemies: (entity, board_index)
+    let breakthroughs: Vec<(Entity, Option<u8>)> = {
+        let mut query = world.query_filtered::<(Entity, &Position), With<Enemy>>();
+        query
+            .iter(world)
+            .filter(|(_, pos)| pos.y >= breakthrough_threshold)
+            .map(|(entity, pos)| (entity, get_board(pos.x)))
+            .collect()
+    };
+
+    if breakthroughs.is_empty() {
+        return;
+    }
+
+    // Decrement lives for each breakthrough
+    if let Some(mut players) = world.get_resource_mut::<Players>() {
+        for (_, board_opt) in &breakthroughs {
+            if let Some(board_idx) = board_opt {
+                if let Some(player) = players.0.get_mut(*board_idx as usize) {
+                    player.lives = player.lives.saturating_sub(1);
+                }
+            }
+        }
+    }
+
+    // Despawn breakthrough enemies
+    for (entity, _) in breakthroughs {
+        world.despawn(entity);
+    }
+}
+
 pub fn update_mana(mut query: Query<&mut Mana>, time: Res<DeltaTime>) {
     for mut mana in query.iter_mut() {
         mana.current = (mana.current + mana.regen * time.0).min(mana.max);
@@ -619,6 +664,10 @@ mod tests {
         world.insert_resource(DeltaTime(tick_delta));
 
         // 1. Far away: should move
+        // Reset enemy position before each tick for determinism (enemy gets fallback movement).
+        world
+            .entity_mut(enemy)
+            .insert(Position { x: 100.0, y: 0.0 });
         update_combat_movement(&mut world);
         let pos = world.entity(unit).get::<Position>().unwrap();
         assert!(pos.x > 0.0, "Unit should move towards enemy when far away");
@@ -626,12 +675,18 @@ mod tests {
         // 2. Within range: should stop
         // Teleport to just inside range (40 pixels away)
         world.entity_mut(unit).insert(Position { x: 60.0, y: 0.0 });
+        world
+            .entity_mut(enemy)
+            .insert(Position { x: 100.0, y: 0.0 });
         update_combat_movement(&mut world);
         let pos = world.entity(unit).get::<Position>().unwrap();
         assert_eq!(pos.x, 60.0, "Unit should NOT move when within attack range");
 
         // 3. Exactly at range: should stop
         world.entity_mut(unit).insert(Position { x: 50.0, y: 0.0 });
+        world
+            .entity_mut(enemy)
+            .insert(Position { x: 100.0, y: 0.0 });
         update_combat_movement(&mut world);
         let pos = world.entity(unit).get::<Position>().unwrap();
         assert_eq!(
@@ -2035,6 +2090,122 @@ mod tests {
         assert_eq!(
             players.0[0].gold, 100,
             "Regular enemy kill should award no bounty gold"
+        );
+    }
+
+    #[test]
+    fn update_life_loss_decrements_player_lives_and_despawns_enemy() {
+        use crate::model::player::Player;
+
+        let mut world = World::new();
+
+        // Set up two players with 30 lives each
+        let player0 = Player::new(1, "alice".to_string(), 100);
+        let player1 = Player::new(2, "bob".to_string(), 100);
+        world.insert_resource(Players(vec![player0, player1]));
+
+        // Spawn an enemy on board 0 (left board, x < LEFT_BOARD_END) at y >= TOTAL_HEIGHT
+        // TOTAL_HEIGHT = 600.0, SQUARE_SIZE = 60.0, breakthrough threshold = 540.0
+        let enemy = crate::handler::spawn::spawn_enemy(
+            &mut world,
+            Position { x: 100.0, y: 600.0 },
+            Shape::Triangle,
+            1,
+        );
+
+        update_life_loss(&mut world);
+
+        // Player 0's lives should be decremented
+        let players = world.resource::<Players>();
+        assert_eq!(
+            players.0[0].lives, 29,
+            "Player 0 should have lost 1 life from the breakthrough"
+        );
+        assert_eq!(
+            players.0[1].lives, 30,
+            "Player 1 should not have lost any lives"
+        );
+
+        // Enemy should be despawned
+        assert!(
+            !world.entities().contains(enemy),
+            "Breakthrough enemy should be despawned"
+        );
+    }
+
+    #[test]
+    fn update_life_loss_does_not_affect_enemies_below_threshold() {
+        use crate::model::player::Player;
+
+        let mut world = World::new();
+
+        let player0 = Player::new(1, "alice".to_string(), 100);
+        world.insert_resource(Players(vec![player0]));
+
+        // Enemy well within board bounds (y = 300.0 < 540.0)
+        let safe_enemy = crate::handler::spawn::spawn_enemy(
+            &mut world,
+            Position { x: 100.0, y: 300.0 },
+            Shape::Triangle,
+            1,
+        );
+
+        update_life_loss(&mut world);
+
+        let players = world.resource::<Players>();
+        assert_eq!(players.0[0].lives, 30, "Lives should remain unchanged");
+        assert!(
+            world.entities().contains(safe_enemy),
+            "Enemy below threshold should not be despawned"
+        );
+    }
+
+    #[test]
+    fn update_life_loss_clamps_at_zero() {
+        use crate::model::player::Player;
+
+        let mut world = World::new();
+
+        // Player with 0 lives already
+        let mut player0 = Player::new(1, "alice".to_string(), 100);
+        player0.lives = 0;
+        world.insert_resource(Players(vec![player0]));
+
+        crate::handler::spawn::spawn_enemy(
+            &mut world,
+            Position { x: 100.0, y: 600.0 },
+            Shape::Triangle,
+            1,
+        );
+
+        update_life_loss(&mut world);
+
+        let players = world.resource::<Players>();
+        assert_eq!(players.0[0].lives, 0, "Lives should not underflow below 0");
+    }
+
+    #[test]
+    fn targetless_enemy_moves_downward() {
+        let mut world = World::new();
+        world.insert_resource(DeltaTime(1.0 / 30.0));
+
+        // Spawn an enemy with no target on board 0
+        let enemy = crate::handler::spawn::spawn_enemy(
+            &mut world,
+            Position { x: 100.0, y: 200.0 },
+            Shape::Triangle,
+            1,
+        );
+
+        let y_before = world.entity(enemy).get::<Position>().unwrap().y;
+        update_combat_movement(&mut world);
+        let y_after = world.entity(enemy).get::<Position>().unwrap().y;
+
+        assert!(
+            y_after > y_before,
+            "Targetless enemy should move downward (y increased): before={}, after={}",
+            y_before,
+            y_after
         );
     }
 }

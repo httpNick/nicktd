@@ -44,6 +44,7 @@ interface Player {
     username: string;
     gold: number;
     income: number;
+    lives: number;
     spawning_queue: ('Square' | 'Circle' | 'Triangle')[];
 }
 
@@ -70,6 +71,12 @@ type ServerMessage =
     | { type: 'Error'; data: string }
     | { type: 'UnitInfo'; data: UnitStaticInfo };
 
+// Game Over overlay
+const gameOverOverlay = document.getElementById('game-over-overlay') as HTMLDivElement;
+const gameResultTitle = document.getElementById('game-result-title') as HTMLHeadingElement;
+const gameResultSubtitle = document.getElementById('game-result-subtitle') as HTMLParagraphElement;
+const overlayLeaveLobbyButton = document.getElementById('overlay-leave-lobby') as HTMLButtonElement;
+
 // Views
 const authView = document.getElementById('auth-view') as HTMLDivElement;
 const lobbySelectionView = document.getElementById('lobby-selection') as HTMLDivElement;
@@ -90,6 +97,7 @@ const leaveLobbyButton = document.getElementById('leave-lobby') as HTMLButtonEle
 const gamePhaseEl = document.getElementById('game-phase') as HTMLSpanElement;
 const gameTimerEl = document.getElementById('game-timer') as HTMLSpanElement;
 const goldDisplay = document.getElementById('gold-display') as HTMLSpanElement;
+const livesDisplay = document.getElementById('lives-display') as HTMLSpanElement;
 const hireWorkerBtn = document.getElementById('hire-worker-btn') as HTMLButtonElement;
 
 const BOARD_SIZE = 10;
@@ -410,6 +418,7 @@ function updateGameState(newState: GameState) {
             goldDisplay.textContent = me.income > 0
                 ? `${me.gold} (+${me.income}/round)`
                 : me.gold.toString();
+            livesDisplay.textContent = me.lives.toString();
             mercPanel.updateGold(me.gold);
         }
         applyPanelBoardSide();
@@ -421,6 +430,28 @@ function updateGameState(newState: GameState) {
     gameTimerEl.textContent = gameTimer.toFixed(1);
 
     panel.syncDynamicState(gameState, gamePhase);
+
+    if (newState.phase === 'GameOver') {
+        const me = newState.players.find(p => p.id === myPlayerId);
+        const isLoser = me ? me.lives === 0 : false;
+        gameResultTitle.textContent = isLoser ? 'Defeat' : 'Victory!';
+        gameResultTitle.className = isLoser ? 'defeat' : 'victory';
+        gameResultSubtitle.textContent = isLoser
+            ? 'Your base was overrun.'
+            : 'Your opponent\'s base fell!';
+        gameOverOverlay.style.display = 'flex';
+        mercPanel.hide();
+        selectedShape = 'Square';
+    } else if (newState.phase === 'Victory') {
+        gameResultTitle.textContent = 'Victory!';
+        gameResultTitle.className = 'victory';
+        gameResultSubtitle.textContent = 'All waves defeated!';
+        gameOverOverlay.style.display = 'flex';
+        mercPanel.hide();
+        selectedShape = 'Square';
+    } else {
+        gameOverOverlay.style.display = 'none';
+    }
 }
 
 function handleCombatEvents(events: CombatEvent[]) {
@@ -568,12 +599,16 @@ canvas.addEventListener('click', function (event) {
     }
 });
 
-leaveLobbyButton.onclick = () => {
+function handleLeaveLobby() {
     isInGame = false;
+    gameOverOverlay.style.display = 'none';
     socket?.send(JSON.stringify({ action: 'leaveLobby' }));
     panel.clearSelection();
     mercPanel.hide();
     showLobbyView();
-};
+}
+
+leaveLobbyButton.onclick = handleLeaveLobby;
+overlayLeaveLobbyButton.onclick = handleLeaveLobby;
 
 showAuthView();

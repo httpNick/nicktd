@@ -16,6 +16,8 @@ pub struct Player {
     pub income: u32,
     /// Units queued to be sent to the opponent's board on the next combat phase.
     pub spawning_queue: Vec<Shape>,
+    /// Remaining lives; reaching 0 triggers Game Over.
+    pub lives: u32,
 }
 
 impl Player {
@@ -26,6 +28,7 @@ impl Player {
             gold,
             income: 0,
             spawning_queue: Vec::new(),
+            lives: 30,
         }
     }
 
@@ -50,6 +53,12 @@ impl Player {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn player_new_initialises_lives_to_30() {
+        let player = Player::new(1, "test".to_string(), 100);
+        assert_eq!(player.lives, 30);
+    }
 
     #[test]
     fn player_has_gold_field() {
