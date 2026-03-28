@@ -35,3 +35,6 @@ GEMINI.md
 # Node.js
 node_modules/
 view/dist/
+
+# Trunk WASM build output
+view-rust/dist/

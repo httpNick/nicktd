@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+common = { path = "../common" }
 bevy_ecs = "0.17.2"
 bcrypt = "0.15"
 chrono = { version = "0.4", features = ["serde"] }

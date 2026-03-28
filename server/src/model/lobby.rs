@@ -2,7 +2,7 @@ use super::components::{
     Dead, Enemy, Health, Mana, PlayerIdComponent, Position, ShapeComponent, Worker, WorkerState,
 };
 use super::game_state::{GameState, NetworkChannel};
-use super::messages::{CombatEvent, SerializableGameState, ServerMessage, Unit};
+use super::messages::{CombatEvent, PlayerView, SerializableGameState, ServerMessage, Unit};
 use super::player::{Player, Players};
 use bevy_ecs::message::Messages;
 use bevy_ecs::prelude::{Entity, Without};
@@ -83,7 +83,16 @@ impl Lobby {
 
         let serializable_state = SerializableGameState {
             units,
-            players: self.players.clone(),
+            players: self
+                .players
+                .iter()
+                .map(|p| PlayerView {
+                    id: p.id,
+                    username: p.username.clone(),
+                    gold: p.gold,
+                    income: p.income,
+                })
+                .collect(),
             phase: self.game_state.phase,
             phase_timer: self.game_state.phase_timer,
         };

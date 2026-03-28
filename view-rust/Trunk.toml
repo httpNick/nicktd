@@ -1,0 +1,9 @@
+[build]
+target = "index.html"
+
+[watch]
+ignore = ["/home/nick/projects/nicktd/target"]
+
+[serve]
+addresses = ["127.0.0.1"]
+port = 3000

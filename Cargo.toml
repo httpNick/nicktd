@@ -1,0 +1,7 @@
+[workspace]
+members = [
+    "server",
+    "common",
+    "view-rust",
+]
+resolver = "2"

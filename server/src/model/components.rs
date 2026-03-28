@@ -3,11 +3,9 @@ use serde::{Deserialize, Serialize};
 
 use super::shape::Shape;
 
-#[derive(Component, Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
-pub struct Position {
-    pub x: f32,
-    pub y: f32,
-}
+// Position and DamageType are now defined in the `common` crate; re-export for backward compatibility.
+pub use common::DamageType;
+pub use common::Position;
 
 #[derive(Component, Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub struct HomePosition(pub Position);
@@ -62,13 +60,6 @@ pub struct InAttackRange;
 pub struct Health {
     pub current: f32,
     pub max: f32,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
-pub enum DamageType {
-    PhysicalPierce,
-    PhysicalBasic,
-    FireMagical,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]

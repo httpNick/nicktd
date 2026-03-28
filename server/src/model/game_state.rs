@@ -1,13 +1,8 @@
 use bevy_ecs::prelude::{Resource, World};
-use serde::Serialize;
 use tokio::sync::broadcast;
 
-#[derive(Debug, Serialize, Clone, Copy, PartialEq, Eq, Hash, Resource)]
-pub enum GamePhase {
-    Build,
-    Combat,
-    Victory,
-}
+// GamePhase is now defined in the `common` crate; re-export for backward compatibility.
+pub use common::GamePhase;
 
 /// ECS Resource tracking the remaining time in the current phase (seconds).
 #[derive(Debug, Resource)]
