@@ -1,11 +1,12 @@
 use super::components::{
-    Dead, Enemy, Health, Mana, PlayerIdComponent, Position, ShapeComponent, Worker, WorkerState,
+    Dead, Enemy, Health, King, Mana, PlayerIdComponent, Position, ShapeComponent, Worker,
+    WorkerState,
 };
 use super::game_state::{GameState, NetworkChannel};
 use super::messages::{CombatEvent, SerializableGameState, ServerMessage, Unit};
 use super::player::{Player, Players};
 use bevy_ecs::message::Messages;
-use bevy_ecs::prelude::{Entity, Without};
+use bevy_ecs::prelude::{Entity, With, Without};
 use tokio::sync::broadcast;
 
 pub struct Lobby {
@@ -15,6 +16,8 @@ pub struct Lobby {
     /// Incremented each time the lobby is reset so the old game loop task can detect
     /// that a new game has started and exit cleanly.
     pub game_generation: u32,
+    /// Set when a king dies; `Some(id)` = that player won, `None` = draw.
+    pub winner_id: Option<i64>,
 }
 
 impl Lobby {
@@ -29,6 +32,7 @@ impl Lobby {
             players: Vec::new(),
             tx,
             game_generation: 0,
+            winner_id: None,
         }
     }
 
@@ -37,6 +41,13 @@ impl Lobby {
     }
 
     pub fn broadcast_gamestate(&mut self) {
+        let king_entities: std::collections::HashSet<Entity> = self
+            .game_state
+            .world
+            .query_filtered::<Entity, With<King>>()
+            .iter(&self.game_state.world)
+            .collect();
+
         let mut query = self.game_state.world.query_filtered::<(
             Entity,
             &Position,
@@ -76,6 +87,7 @@ impl Lobby {
                         current_mana: maybe_mana.map(|m| m.current),
                         max_mana: maybe_mana.map(|m| m.max),
                         worker_state: maybe_worker_state.map(|ws| format!("{ws:?}")),
+                        is_king: king_entities.contains(&entity),
                     }
                 },
             )
@@ -86,17 +98,12 @@ impl Lobby {
             players: self.players.clone(),
             phase: self.game_state.phase,
             phase_timer: self.game_state.phase_timer,
+            winner_id: self.winner_id,
         };
 
         let msg = ServerMessage::GameState(serializable_state);
         let msg_str = serde_json::to_string(&msg).unwrap();
         let _ = self.tx.send(msg_str);
-    }
-
-    pub fn broadcast_message(&self, message: &ServerMessage) {
-        if let Ok(msg_str) = serde_json::to_string(message) {
-            let _ = self.tx.send(msg_str);
-        }
     }
 }
 

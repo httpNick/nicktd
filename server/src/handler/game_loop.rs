@@ -2,13 +2,14 @@ use crate::{
     handler::{
         combat::{
             cleanup_dead_entities, process_combat, update_active_combat_stats,
-            update_combat_movement, update_combat_reset, update_life_loss, update_mana,
-            update_targeting,
+            update_attack_range_markers, update_combat_movement, update_combat_reset,
+            update_leaked_creeps, update_mana, update_targeting,
         },
+        king::{apply_king_regen, update_king_attack_range, update_king_targeting},
         worker::update_workers,
     },
     model::{
-        components::Position,
+        components::{Health, King, PlayerIdComponent, Position},
         game_state::{DeltaTime, GamePhase, NetworkChannel},
         messages::{CombatEvent, ServerMessage},
         player::Players,
@@ -92,20 +93,35 @@ pub fn build_main_schedule() -> Schedule {
     // CombatInit: advance the message double-buffer.
     schedule.add_systems(update_combat_messages.in_set(GameSystemSet::CombatInit));
 
-    // Targeting: acquire targets, then update derived stats.
+    // Targeting: acquire targets, then update derived stats, then king targeting pass.
     schedule.add_systems(update_targeting.in_set(GameSystemSet::Targeting));
     schedule.add_systems(
         update_active_combat_stats
             .in_set(GameSystemSet::Targeting)
             .after(update_targeting),
     );
+    schedule.add_systems(
+        update_king_targeting
+            .in_set(GameSystemSet::Targeting)
+            .after(update_active_combat_stats),
+    );
 
-    // Movement: move units, then regenerate mana.
+    // Movement: move units, validate attack ranges, then regenerate mana.
     schedule.add_systems(update_combat_movement.in_set(GameSystemSet::Movement));
+    schedule.add_systems(
+        update_attack_range_markers
+            .in_set(GameSystemSet::Movement)
+            .after(update_combat_movement),
+    );
+    schedule.add_systems(
+        update_king_attack_range
+            .in_set(GameSystemSet::Movement)
+            .after(update_attack_range_markers),
+    );
     schedule.add_systems(
         update_mana
             .in_set(GameSystemSet::Movement)
-            .after(update_combat_movement),
+            .after(update_attack_range_markers),
     );
 
     // Damage: resolve combat, then broadcast resulting events.
@@ -116,17 +132,17 @@ pub fn build_main_schedule() -> Schedule {
             .after(process_combat),
     );
 
-    // Cleanup: remove dead entities, detect breakthroughs, then reset cooldowns.
+    // Cleanup: remove dead entities, route leaked creeps to king, then reset cooldowns.
     schedule.add_systems(cleanup_dead_entities.in_set(GameSystemSet::Cleanup));
     schedule.add_systems(
-        update_life_loss
+        update_leaked_creeps
             .in_set(GameSystemSet::Cleanup)
             .after(cleanup_dead_entities),
     );
     schedule.add_systems(
         update_combat_reset
             .in_set(GameSystemSet::Cleanup)
-            .after(update_life_loss),
+            .after(update_leaked_creeps),
     );
 
     // Workers: move workers and deposit gold.
@@ -178,6 +194,23 @@ pub async fn run_game_loop(server_state: ServerState, lobby_id: usize, generatio
                                     &mut lobby.game_state.world,
                                     player.id,
                                     targets,
+                                );
+                            }
+                        }
+
+                        // Spawn kings once (when workers first appear = game start).
+                        let king_count = lobby
+                            .game_state
+                            .world
+                            .query::<&King>()
+                            .iter(&lobby.game_state.world)
+                            .count();
+                        if king_count == 0 {
+                            for (idx, player) in lobby.players.iter().enumerate() {
+                                crate::handler::spawn::spawn_king(
+                                    &mut lobby.game_state.world,
+                                    player.id,
+                                    idx,
                                 );
                             }
                         }
@@ -257,11 +290,34 @@ pub async fn run_game_loop(server_state: ServerState, lobby_id: usize, generatio
             }
             lobby.players = lobby.game_state.world.resource::<Players>().0.clone();
 
-            // Check for game over: if any player has 0 lives, transition to GameOver.
+            // King death check: if any king's HP reaches 0, trigger GameOver.
             if lobby.game_state.phase == GamePhase::Combat {
-                if lobby.players.iter().any(|p| p.lives == 0) {
+                let dead_king_player_ids: Vec<i64> = {
+                    let mut query = lobby
+                        .game_state
+                        .world
+                        .query::<(&King, &PlayerIdComponent, &Health)>();
+                    query
+                        .iter(&lobby.game_state.world)
+                        .filter(|(_, _, health)| health.current <= 0.0)
+                        .map(|(_, pid, _)| pid.0)
+                        .collect()
+                };
+                if !dead_king_player_ids.is_empty() {
                     lobby.game_state.phase = GamePhase::GameOver;
                     lobby.game_state.world.insert_resource(GamePhase::GameOver);
+                    // Determine winner: if exactly one king died, the other player wins.
+                    if dead_king_player_ids.len() == 1 {
+                        let loser_id = dead_king_player_ids[0];
+                        lobby.winner_id = lobby
+                            .players
+                            .iter()
+                            .find(|p| p.id != loser_id)
+                            .map(|p| p.id);
+                    } else {
+                        // Both kings died simultaneously — draw.
+                        lobby.winner_id = None;
+                    }
                 }
             }
 
@@ -281,6 +337,9 @@ pub async fn run_game_loop(server_state: ServerState, lobby_id: usize, generatio
                         player.gold += 50;
                         player.gold += player.income;
                     }
+
+                    // Regen king HP at end of each wave.
+                    apply_king_regen(&mut lobby.game_state.world);
                 }
             }
 
@@ -293,6 +352,8 @@ pub async fn run_game_loop(server_state: ServerState, lobby_id: usize, generatio
 }
 
 pub fn check_wave_cleared(world: &mut bevy_ecs::prelude::World) -> bool {
+    // Wave is cleared only when ALL enemies are gone (in-lane AND leaked).
+    // The game should remain in Combat phase until king combat finishes.
     let mut query = world.query::<&crate::model::components::Enemy>();
     query.iter(world).count() == 0
 }
@@ -301,6 +362,7 @@ pub fn check_wave_cleared(world: &mut bevy_ecs::prelude::World) -> bool {
 mod tests {
     use super::*;
     use crate::model::components::Worker;
+    use crate::model::constants::TOTAL_HEIGHT;
     use crate::model::game_state::GamePhase;
     use crate::model::lobby::Lobby;
     use crate::model::player::Player;
@@ -1293,6 +1355,131 @@ mod tests {
             phase_after,
             GamePhase::GameOver,
             "Phase should remain GameOver when schedule is skipped"
+        );
+    }
+
+    // --- Task 9.1 / 3.4: check_wave_cleared ignores leaked enemies ---
+
+    #[test]
+    fn check_wave_cleared_false_when_leaked_enemies_present() {
+        use crate::handler::spawn::spawn_enemy;
+        use bevy_ecs::prelude::World;
+
+        let mut world = World::new();
+
+        // Spawn one leaked enemy (past TOTAL_HEIGHT)
+        spawn_enemy(
+            &mut world,
+            Position {
+                x: 100.0,
+                y: TOTAL_HEIGHT + 10.0,
+            },
+            Shape::Triangle,
+            1,
+        );
+
+        // Wave should NOT be cleared while leaked enemies are fighting the king
+        assert!(
+            !check_wave_cleared(&mut world),
+            "Wave should NOT be cleared when leaked enemies remain (king combat ongoing)"
+        );
+    }
+
+    #[test]
+    fn check_wave_cleared_false_when_in_lane_enemy_present() {
+        use crate::handler::spawn::spawn_enemy;
+        use bevy_ecs::prelude::World;
+
+        let mut world = World::new();
+
+        spawn_enemy(
+            &mut world,
+            Position { x: 100.0, y: 300.0 },
+            Shape::Triangle,
+            1,
+        );
+
+        assert!(
+            !check_wave_cleared(&mut world),
+            "Wave should NOT be cleared when an in-lane enemy is present"
+        );
+    }
+
+    // --- Task 9.3 Integration: king death game-over ---
+
+    #[test]
+    fn king_death_triggers_game_over_with_winner() {
+        use crate::handler::spawn::spawn_king;
+        use bevy_ecs::prelude::World;
+
+        let mut world = World::new();
+
+        let king0 = spawn_king(&mut world, 1, 0);
+        let _king1 = spawn_king(&mut world, 2, 1);
+
+        // Kill king 0.
+        world.get_mut::<Health>(king0).unwrap().current = 0.0;
+
+        let dead_king_ids: Vec<i64> = world
+            .query::<(&King, &PlayerIdComponent, &Health)>()
+            .iter(&world)
+            .filter(|(_, _, h)| h.current <= 0.0)
+            .map(|(_, pid, _)| pid.0)
+            .collect();
+
+        assert_eq!(dead_king_ids.len(), 1, "Exactly one king should be dead");
+        assert_eq!(dead_king_ids[0], 1, "Player 1's king should be dead");
+    }
+
+    #[test]
+    fn simultaneous_king_death_produces_draw() {
+        use crate::handler::spawn::spawn_king;
+        use bevy_ecs::prelude::World;
+
+        let mut world = World::new();
+
+        let king0 = spawn_king(&mut world, 1, 0);
+        let king1 = spawn_king(&mut world, 2, 1);
+
+        // Kill both kings simultaneously.
+        world.get_mut::<Health>(king0).unwrap().current = 0.0;
+        world.get_mut::<Health>(king1).unwrap().current = 0.0;
+
+        let dead_king_ids: Vec<i64> = world
+            .query::<(&King, &PlayerIdComponent, &Health)>()
+            .iter(&world)
+            .filter(|(_, _, h)| h.current <= 0.0)
+            .map(|(_, pid, _)| pid.0)
+            .collect();
+
+        assert_eq!(
+            dead_king_ids.len(),
+            2,
+            "Both kings should be dead (draw scenario)"
+        );
+    }
+
+    #[test]
+    fn wave_does_not_clear_with_leaked_creep_in_king_zone() {
+        use crate::handler::spawn::spawn_enemy;
+        use bevy_ecs::prelude::World;
+
+        let mut world = World::new();
+
+        // Leaked creep (in king zone, not in lane).
+        spawn_enemy(
+            &mut world,
+            Position {
+                x: 100.0,
+                y: TOTAL_HEIGHT + 30.0,
+            },
+            Shape::Circle,
+            1,
+        );
+
+        assert!(
+            !check_wave_cleared(&mut world),
+            "Wave must NOT clear while leaked creeps are in king zone (combat ongoing)"
         );
     }
 }

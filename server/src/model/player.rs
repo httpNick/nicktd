@@ -16,8 +16,8 @@ pub struct Player {
     pub income: u32,
     /// Units queued to be sent to the opponent's board on the next combat phase.
     pub spawning_queue: Vec<Shape>,
-    /// Remaining lives; reaching 0 triggers Game Over.
-    pub lives: u32,
+    /// Current king upgrade tier (0 = base, max 4).
+    pub king_tier: u32,
 }
 
 impl Player {
@@ -28,7 +28,7 @@ impl Player {
             gold,
             income: 0,
             spawning_queue: Vec::new(),
-            lives: 30,
+            king_tier: 0,
         }
     }
 
@@ -55,9 +55,9 @@ mod tests {
     use super::*;
 
     #[test]
-    fn player_new_initialises_lives_to_30() {
+    fn player_new_initialises_king_tier_to_zero() {
         let player = Player::new(1, "test".to_string(), 100);
-        assert_eq!(player.lives, 30);
+        assert_eq!(player.king_tier, 0);
     }
 
     #[test]

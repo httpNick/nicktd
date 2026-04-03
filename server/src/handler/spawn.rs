@@ -1,7 +1,10 @@
 use crate::model::components::{
     AttackRange, AttackStats, AttackTimer, Boss, Bounty, CollisionRadius, DefenseSpecialty,
-    DefenseStats, Enemy, Health, HomePosition, PlayerIdComponent, Position, Resistances,
+    DefenseStats, Enemy, Health, HomePosition, King, PlayerIdComponent, Position, Resistances,
     ShapeComponent, TargetPositions, Worker, WorkerState,
+};
+use crate::model::king_config::{
+    KING_BASE_DAMAGE, KING_BASE_HP, KING_BASE_RANGE, KING_BASE_RATE, KING_COLLISION_RADIUS,
 };
 use crate::model::shape::Shape;
 use crate::model::unit_config::{
@@ -153,6 +156,49 @@ pub fn spawn_unit(world: &mut World, pos: Position, shape: Shape, player_id: i64
     entity.id()
 }
 
+/// Spawns the King entity for the given player on the specified board.
+///
+/// `board_idx 0` → left board position; `board_idx 1` → right board position.
+/// The King has no `HomePosition` or `Enemy` — it persists through wave resets
+/// and is not targeted by towers.
+pub fn spawn_king(world: &mut World, player_id: i64, board_idx: usize) -> Entity {
+    use crate::model::components::DamageType;
+    use crate::model::constants::{KING_LEFT_X, KING_RIGHT_X, KING_Y};
+
+    let pos = if board_idx == 0 {
+        Position {
+            x: KING_LEFT_X,
+            y: KING_Y,
+        }
+    } else {
+        Position {
+            x: KING_RIGHT_X,
+            y: KING_Y,
+        }
+    };
+
+    world
+        .spawn((
+            pos,
+            King,
+            PlayerIdComponent(player_id),
+            Health {
+                current: KING_BASE_HP,
+                max: KING_BASE_HP,
+            },
+            AttackStats {
+                damage: KING_BASE_DAMAGE,
+                rate: KING_BASE_RATE,
+                damage_type: DamageType::PhysicalBasic,
+            },
+            AttackTimer(0.0),
+            AttackRange(KING_BASE_RANGE),
+            CollisionRadius(KING_COLLISION_RADIUS),
+            ShapeComponent(Shape::Circle),
+        ))
+        .id()
+}
+
 pub fn spawn_worker(world: &mut World, player_id: i64, targets: TargetPositions) -> Entity {
     world
         .spawn((
@@ -184,6 +230,85 @@ pub fn spawn_worker(world: &mut World, player_id: i64, targets: TargetPositions)
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // --- Task 9.1 TDD tests for spawn_king ---
+
+    #[test]
+    fn spawn_king_has_no_home_position() {
+        use crate::model::components::HomePosition;
+        let mut world = World::new();
+        let king = spawn_king(&mut world, 1, 0);
+        assert!(
+            world.entity(king).get::<HomePosition>().is_none(),
+            "King must not have HomePosition"
+        );
+    }
+
+    #[test]
+    fn spawn_king_has_correct_base_stats() {
+        use crate::model::components::{AttackRange, AttackStats, CollisionRadius, Health};
+        use crate::model::king_config::{
+            KING_BASE_DAMAGE, KING_BASE_HP, KING_BASE_RANGE, KING_COLLISION_RADIUS,
+        };
+        let mut world = World::new();
+        let king = spawn_king(&mut world, 1, 0);
+        let e = world.entity(king);
+
+        let health = e.get::<Health>().unwrap();
+        assert!(
+            (health.current - KING_BASE_HP).abs() < f32::EPSILON,
+            "King current HP mismatch"
+        );
+        assert!(
+            (health.max - KING_BASE_HP).abs() < f32::EPSILON,
+            "King max HP mismatch"
+        );
+
+        let stats = e.get::<AttackStats>().unwrap();
+        assert!(
+            (stats.damage - KING_BASE_DAMAGE).abs() < f32::EPSILON,
+            "King damage mismatch"
+        );
+
+        let range = e.get::<AttackRange>().unwrap();
+        assert!(
+            (range.0 - KING_BASE_RANGE).abs() < f32::EPSILON,
+            "King range mismatch"
+        );
+
+        let radius = e.get::<CollisionRadius>().unwrap();
+        assert!(
+            (radius.0 - KING_COLLISION_RADIUS).abs() < f32::EPSILON,
+            "King collision radius mismatch"
+        );
+    }
+
+    #[test]
+    fn spawn_king_positions_are_correct() {
+        use crate::model::constants::{KING_LEFT_X, KING_RIGHT_X, KING_Y};
+        let mut world = World::new();
+        let king_left = spawn_king(&mut world, 1, 0);
+        let king_right = spawn_king(&mut world, 2, 1);
+
+        let pos_left = world.entity(king_left).get::<Position>().unwrap();
+        assert!((pos_left.x - KING_LEFT_X).abs() < f32::EPSILON);
+        assert!((pos_left.y - KING_Y).abs() < f32::EPSILON);
+
+        let pos_right = world.entity(king_right).get::<Position>().unwrap();
+        assert!((pos_right.x - KING_RIGHT_X).abs() < f32::EPSILON);
+        assert!((pos_right.y - KING_Y).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn spawn_king_is_not_enemy() {
+        use crate::model::components::Enemy;
+        let mut world = World::new();
+        let king = spawn_king(&mut world, 1, 0);
+        assert!(
+            world.entity(king).get::<Enemy>().is_none(),
+            "King must not be tagged as Enemy"
+        );
+    }
 
     #[test]
     fn spawn_helpers_apply_shape_radii() {

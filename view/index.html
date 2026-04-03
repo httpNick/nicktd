@@ -59,6 +59,31 @@
         .merc-send-btn { margin: 0; padding: 0 10px; height: 28px; background: #8B0000; color: #fff; border: none; border-radius: 3px; cursor: pointer; font-size: 0.85em; }
         .merc-send-btn:hover { background: #a00; }
         .merc-send-btn[data-unaffordable="true"] { opacity: 0.4; cursor: not-allowed; pointer-events: none; }
+        #king-upgrade-panel {
+            background-color: rgba(0, 0, 0, 0.85);
+            border: 2px solid #FFD700;
+            padding: 10px 14px;
+            margin-top: 8px;
+            width: 340px;
+            box-sizing: border-box;
+            font-size: 0.9em;
+        }
+        .king-panel-header { margin-bottom: 6px; }
+        .king-panel-title { font-size: 1.05em; font-weight: bold; color: #FFD700; }
+        .king-panel-hp { color: #ccc; margin-bottom: 4px; }
+        .king-panel-upgrade-info { color: #aaffaa; margin-bottom: 6px; font-size: 0.85em; }
+        .king-upgrade-btn {
+            padding: 0 12px;
+            height: 28px;
+            background: #7a5900;
+            color: #FFD700;
+            border: 1px solid #FFD700;
+            border-radius: 3px;
+            cursor: pointer;
+            font-size: 0.85em;
+        }
+        .king-upgrade-btn:hover:not(:disabled) { background: #a07800; }
+        .king-upgrade-btn:disabled { opacity: 0.4; cursor: not-allowed; }
         #game-over-overlay {
             display: none;
             position: fixed;
@@ -131,7 +156,7 @@
     <div id="game-view">
         <div id="controls">
             <div id="game-status">
-                Phase: <span id="game-phase"></span> | Time: <span id="game-timer"></span> | Gold: <span id="gold-display">0</span> | Lives: <span id="lives-display">30</span>
+                Phase: <span id="game-phase"></span> | Time: <span id="game-timer"></span> | Gold: <span id="gold-display">0</span> | King HP: <span id="lives-display">--</span>
             </div>
             <button id="selectSquare">Square (25g)</button>
             <button id="selectCircle">Circle (75g)</button>
@@ -140,7 +165,7 @@
             <button id="skip-to-combat">Start Combat</button>
             <button id="leave-lobby">Leave Lobby</button>
         </div>
-        <canvas id="gameCanvas" width="1400" height="600"></canvas>
+        <canvas id="gameCanvas" width="1400" height="720"></canvas>
         <div id="mercenary-panel">
             <div class="merc-header">
                 <span>⚔ Send Units</span>
@@ -148,6 +173,7 @@
             </div>
             <div data-merc="unit-list" class="merc-unit-list"></div>
         </div>
+        <div id="king-upgrade-panel"></div>
         <div id="game-over-overlay">
             <h1 id="game-result-title"></h1>
             <p id="game-result-subtitle"></p>

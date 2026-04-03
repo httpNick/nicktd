@@ -1,6 +1,7 @@
 import { AnimationManager, DamageType, Position } from './animations';
 import { UnitInfoPanel } from './unit_info_panel';
 import { MercenaryPanel } from './mercenary_panel';
+import { KingUpgradePanel } from './king_upgrade_panel';
 
 // --- TYPES & INTERFACES ---
 interface Unit {
@@ -16,6 +17,7 @@ interface Unit {
     current_mana?: number;
     max_mana?: number;
     worker_state?: 'MovingToVein' | 'Mining' | 'MovingToCart';
+    is_king: boolean;
 }
 
 interface UnitStaticInfo {
@@ -37,14 +39,15 @@ type ClientMessagePayload =
     | { action: 'leaveLobby' }
     | { action: 'hireWorker'; payload: Record<string, never> }
     | { action: 'requestUnitInfo'; payload: { entity_id: number } }
-    | { action: 'sendUnit'; payload: { shape: string } };
+    | { action: 'sendUnit'; payload: { shape: string } }
+    | { action: 'upgradeKing'; payload: Record<string, never> };
 
 interface Player {
     id: number;
     username: string;
     gold: number;
     income: number;
-    lives: number;
+    king_tier: number;
     spawning_queue: ('Square' | 'Circle' | 'Triangle')[];
 }
 
@@ -53,6 +56,7 @@ interface GameState {
     players: Player[];
     phase: string;
     phase_timer: number;
+    winner_id: number | null;
 }
 
 interface CombatEvent {
@@ -106,6 +110,16 @@ const GAP_SIZE = 200;
 const LEFT_BOARD_END = 600;
 const RIGHT_BOARD_START = 800;
 
+// King zone constants
+const TOTAL_HEIGHT = 600;
+const KING_ZONE_HEIGHT = 120;
+const CANVAS_HEIGHT = 720; // TOTAL_HEIGHT + KING_ZONE_HEIGHT
+
+const KING_Y = 660;           // TOTAL_HEIGHT + 60
+const KING_LEFT_X = 300;      // BOARD_SIZE / 2 * SQUARE_SIZE
+const KING_RIGHT_X = 1100;    // RIGHT_BOARD_START + BOARD_SIZE / 2 * SQUARE_SIZE
+const KING_RADIUS = 30;
+
 const MERC_BUILDING_X = LEFT_BOARD_END + GAP_SIZE / 2;  // 700
 const MERC_BUILDING_Y = [150, 450] as const;
 const MERC_BUILDING_HALF = 18;
@@ -142,6 +156,15 @@ const mercPanel = new MercenaryPanel(
         },
     }
 );
+
+const kingUpgradePanel = new KingUpgradePanel({
+    container: document.getElementById('king-upgrade-panel') as HTMLElement,
+    onUpgrade: () => {
+        if (socket && socket.readyState === WebSocket.OPEN) {
+            socket.send(JSON.stringify({ action: 'upgradeKing', payload: {} }));
+        }
+    },
+});
 
 const API_BASE_URL = 'http://127.0.0.1:9001';
 
@@ -303,21 +326,59 @@ function renderLobbies(lobbies: any[]) {
     });
 }
 
+function drawKingZone() {
+    // Left board king zone: x = 0..600, y = 600..720
+    ctx.fillStyle = '#1a1a2e';
+    ctx.fillRect(0, TOTAL_HEIGHT, LEFT_BOARD_END, KING_ZONE_HEIGHT);
+
+    // Right board king zone: x = 800..1400, y = 600..720
+    ctx.fillRect(RIGHT_BOARD_START, TOTAL_HEIGHT, LEFT_BOARD_END, KING_ZONE_HEIGHT);
+
+    // Border / separator lines at y = 600
+    ctx.strokeStyle = '#444488';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(0, TOTAL_HEIGHT);
+    ctx.lineTo(LEFT_BOARD_END, TOTAL_HEIGHT);
+    ctx.stroke();
+
+    ctx.beginPath();
+    ctx.moveTo(RIGHT_BOARD_START, TOTAL_HEIGHT);
+    ctx.lineTo(RIGHT_BOARD_START + LEFT_BOARD_END, TOTAL_HEIGHT);
+    ctx.stroke();
+}
+
 function drawCheckerboard() {
     // Left Board
     for (let row = 0; row < BOARD_SIZE; row++) {
         for (let col = 0; col < BOARD_SIZE; col++) {
-            ctx.fillStyle = (row + col) % 2 === 0 ? '#EEE' : '#CCC';
+            // Rows 8 and 9 are king protection zone — draw dimmed
+            if (row >= 8) {
+                ctx.fillStyle = (row + col) % 2 === 0 ? '#888' : '#666';
+            } else {
+                ctx.fillStyle = (row + col) % 2 === 0 ? '#EEE' : '#CCC';
+            }
             ctx.fillRect(col * SQUARE_SIZE, row * SQUARE_SIZE, SQUARE_SIZE, SQUARE_SIZE);
         }
     }
+    // Overlay dim for rows 8-9 on left board
+    ctx.fillStyle = 'rgba(0,0,0,0.4)';
+    ctx.fillRect(0, 8 * SQUARE_SIZE, LEFT_BOARD_END, 2 * SQUARE_SIZE);
+
     // Right Board
     for (let row = 0; row < BOARD_SIZE; row++) {
         for (let col = 0; col < BOARD_SIZE; col++) {
-            ctx.fillStyle = (row + col) % 2 === 0 ? '#EEE' : '#CCC';
+            if (row >= 8) {
+                ctx.fillStyle = (row + col) % 2 === 0 ? '#888' : '#666';
+            } else {
+                ctx.fillStyle = (row + col) % 2 === 0 ? '#EEE' : '#CCC';
+            }
             ctx.fillRect(RIGHT_BOARD_START + col * SQUARE_SIZE, row * SQUARE_SIZE, SQUARE_SIZE, SQUARE_SIZE);
         }
     }
+    // Overlay dim for rows 8-9 on right board
+    ctx.fillStyle = 'rgba(0,0,0,0.4)';
+    ctx.fillRect(RIGHT_BOARD_START, 8 * SQUARE_SIZE, LEFT_BOARD_END, 2 * SQUARE_SIZE);
 }
 
 function drawWorkerArea() {
@@ -326,12 +387,12 @@ function drawWorkerArea() {
     // Board boundaries
     ctx.beginPath();
     ctx.moveTo(LEFT_BOARD_END, 0);
-    ctx.lineTo(LEFT_BOARD_END, 600);
+    ctx.lineTo(LEFT_BOARD_END, TOTAL_HEIGHT);
     ctx.stroke();
 
     ctx.beginPath();
     ctx.moveTo(RIGHT_BOARD_START, 0);
-    ctx.lineTo(RIGHT_BOARD_START, 600);
+    ctx.lineTo(RIGHT_BOARD_START, TOTAL_HEIGHT);
     ctx.stroke();
 
     // Central horizontal separator
@@ -367,36 +428,82 @@ function drawWorkerArea() {
 
 function drawUnits(units: Unit[]) {
     units.forEach(unit => {
-        const { shape, x, y, owner_id, is_enemy } = unit;
-        if (is_enemy) {
-            ctx.fillStyle = '#2E8B57';
-        } else {
-            ctx.fillStyle = owner_id === myPlayerId ? '#88F' : '#F88';
-        }
+        const { shape, x, y, owner_id, is_enemy, is_king } = unit;
 
-        if (shape === 'Square') {
-            ctx.fillRect(x - (SQUARE_SIZE / 2 - 10), y - (SQUARE_SIZE / 2 - 10), SQUARE_SIZE - 20, SQUARE_SIZE - 20);
-        } else if (shape === 'Circle') {
-            ctx.beginPath(); ctx.arc(x, y, SQUARE_SIZE / 2 - 10, 0, 2 * Math.PI); ctx.fill();
-        } else if (shape === 'Triangle') {
-            ctx.beginPath(); ctx.moveTo(x, y - (SQUARE_SIZE / 2 - 10)); ctx.lineTo(x - (SQUARE_SIZE / 2 - 10), y + (SQUARE_SIZE / 2 - 10)); ctx.lineTo(x + (SQUARE_SIZE / 2 - 10), y + (SQUARE_SIZE / 2 - 10)); ctx.closePath(); ctx.fill();
+        if (is_king) {
+            // Kings get a large distinct render
+            const isMyKing = owner_id === myPlayerId;
+            ctx.fillStyle = isMyKing ? '#FFD700' : '#8B0000';
+
+            ctx.beginPath();
+            ctx.arc(x, y, KING_RADIUS, 0, 2 * Math.PI);
+            ctx.fill();
+
+            // King crown outline
+            ctx.strokeStyle = isMyKing ? '#FFF' : '#FF6666';
+            ctx.lineWidth = 2;
+            ctx.stroke();
+            ctx.lineWidth = 1;
+
+            // King label
+            ctx.fillStyle = isMyKing ? '#000' : '#FFF';
+            ctx.font = 'bold 10px Arial';
+            ctx.textAlign = 'center';
+            ctx.fillText('KING', x, y + 4);
+            ctx.textAlign = 'left';
+        } else {
+            if (is_enemy) {
+                ctx.fillStyle = '#2E8B57';
+            } else {
+                ctx.fillStyle = owner_id === myPlayerId ? '#88F' : '#F88';
+            }
+
+            if (shape === 'Square') {
+                ctx.fillRect(x - (SQUARE_SIZE / 2 - 10), y - (SQUARE_SIZE / 2 - 10), SQUARE_SIZE - 20, SQUARE_SIZE - 20);
+            } else if (shape === 'Circle') {
+                ctx.beginPath(); ctx.arc(x, y, SQUARE_SIZE / 2 - 10, 0, 2 * Math.PI); ctx.fill();
+            } else if (shape === 'Triangle') {
+                ctx.beginPath(); ctx.moveTo(x, y - (SQUARE_SIZE / 2 - 10)); ctx.lineTo(x - (SQUARE_SIZE / 2 - 10), y + (SQUARE_SIZE / 2 - 10)); ctx.lineTo(x + (SQUARE_SIZE / 2 - 10), y + (SQUARE_SIZE / 2 - 10)); ctx.closePath(); ctx.fill();
+            }
         }
     });
 
     units.forEach(unit => {
-        const { x, y, current_hp, max_hp, is_worker } = unit;
+        const { x, y, current_hp, max_hp, is_worker, is_king } = unit;
         if (!is_worker && current_hp !== undefined && max_hp !== undefined) {
-            const barWidth = SQUARE_SIZE - 20;
-            const barHeight = 6;
-            const barX = x - barWidth / 2;
-            const barY = y - (SQUARE_SIZE / 2);
+            if (is_king) {
+                // Wider HP bar for king
+                const barWidth = KING_RADIUS * 2 + 10;
+                const barHeight = 8;
+                const barX = x - barWidth / 2;
+                const barY = y - KING_RADIUS - 14;
 
-            ctx.fillStyle = '#F00';
-            ctx.fillRect(barX, barY, barWidth, barHeight);
+                ctx.fillStyle = '#F00';
+                ctx.fillRect(barX, barY, barWidth, barHeight);
 
-            const healthPercent = Math.max(0, Math.min(1, current_hp / max_hp));
-            ctx.fillStyle = '#0F0';
-            ctx.fillRect(barX, barY, barWidth * healthPercent, barHeight);
+                const healthPercent = Math.max(0, Math.min(1, current_hp / max_hp));
+                ctx.fillStyle = '#0F0';
+                ctx.fillRect(barX, barY, barWidth * healthPercent, barHeight);
+
+                // HP text
+                ctx.fillStyle = '#FFF';
+                ctx.font = '9px Arial';
+                ctx.textAlign = 'center';
+                ctx.fillText(`${current_hp}/${max_hp}`, x, barY - 2);
+                ctx.textAlign = 'left';
+            } else {
+                const barWidth = SQUARE_SIZE - 20;
+                const barHeight = 6;
+                const barX = x - barWidth / 2;
+                const barY = y - (SQUARE_SIZE / 2);
+
+                ctx.fillStyle = '#F00';
+                ctx.fillRect(barX, barY, barWidth, barHeight);
+
+                const healthPercent = Math.max(0, Math.min(1, current_hp / max_hp));
+                ctx.fillStyle = '#0F0';
+                ctx.fillRect(barX, barY, barWidth * healthPercent, barHeight);
+            }
         }
     });
 }
@@ -418,9 +525,26 @@ function updateGameState(newState: GameState) {
             goldDisplay.textContent = me.income > 0
                 ? `${me.gold} (+${me.income}/round)`
                 : me.gold.toString();
-            livesDisplay.textContent = me.lives.toString();
             mercPanel.updateGold(me.gold);
         }
+
+        // Update king HP display
+        const myKing = newState.units.find(u => u.is_king && u.owner_id === myPlayerId);
+        if (myKing) {
+            livesDisplay.textContent = `${myKing.current_hp}/${myKing.max_hp}`;
+        } else {
+            livesDisplay.textContent = '--';
+        }
+
+        // Update king upgrade panel
+        if (me && myKing) {
+            kingUpgradePanel.update(
+                { currentTier: me.king_tier, currentHp: myKing.current_hp, maxHp: myKing.max_hp },
+                me.gold,
+                newState.phase
+            );
+        }
+
         applyPanelBoardSide();
     }
     gamePhase = newState.phase;
@@ -432,15 +556,25 @@ function updateGameState(newState: GameState) {
     panel.syncDynamicState(gameState, gamePhase);
 
     if (newState.phase === 'GameOver') {
-        const me = newState.players.find(p => p.id === myPlayerId);
-        const isLoser = me ? me.lives === 0 : false;
-        gameResultTitle.textContent = isLoser ? 'Defeat' : 'Victory!';
-        gameResultTitle.className = isLoser ? 'defeat' : 'victory';
-        gameResultSubtitle.textContent = isLoser
-            ? 'Your base was overrun.'
-            : 'Your opponent\'s base fell!';
+        const isLoser = newState.winner_id !== null && newState.winner_id !== myPlayerId;
+        const isDraw = newState.winner_id === null;
+
+        if (isDraw) {
+            gameResultTitle.textContent = 'Draw!';
+            gameResultTitle.className = 'defeat';
+            gameResultSubtitle.textContent = 'Both kings fell simultaneously.';
+        } else if (isLoser) {
+            gameResultTitle.textContent = 'Defeat';
+            gameResultTitle.className = 'defeat';
+            gameResultSubtitle.textContent = 'Your base was overrun.';
+        } else {
+            gameResultTitle.textContent = 'Victory!';
+            gameResultTitle.className = 'victory';
+            gameResultSubtitle.textContent = 'Your opponent\'s base fell!';
+        }
         gameOverOverlay.style.display = 'flex';
         mercPanel.hide();
+        kingUpgradePanel.hide();
         selectedShape = 'Square';
     } else if (newState.phase === 'Victory') {
         gameResultTitle.textContent = 'Victory!';
@@ -448,6 +582,7 @@ function updateGameState(newState: GameState) {
         gameResultSubtitle.textContent = 'All waves defeated!';
         gameOverOverlay.style.display = 'flex';
         mercPanel.hide();
+        kingUpgradePanel.hide();
         selectedShape = 'Square';
     } else {
         gameOverOverlay.style.display = 'none';
@@ -514,6 +649,7 @@ function drawSpawningGrounds() {
 function render() {
     if (isInGame) {
         ctx.clearRect(0, 0, canvas.width, canvas.height);
+        drawKingZone();
         drawCheckerboard();
         drawWorkerArea();
         drawUnits(gameState);
@@ -594,6 +730,8 @@ canvas.addEventListener('click', function (event) {
         panel.clearSelection();
         const row = Math.floor(clickY / SQUARE_SIZE);
         const col = Math.floor(localX / SQUARE_SIZE);
+        // Rows 8 and 9 are king protection zone — no placement allowed
+        if (row >= 8) return;
         const placeMessage = { action: 'place', payload: { shape: selectedShape, row, col } };
         if (socket && socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify(placeMessage));
     }
@@ -605,6 +743,7 @@ function handleLeaveLobby() {
     socket?.send(JSON.stringify({ action: 'leaveLobby' }));
     panel.clearSelection();
     mercPanel.hide();
+    kingUpgradePanel.hide();
     showLobbyView();
 }
 

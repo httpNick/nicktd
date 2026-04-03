@@ -1,10 +1,8 @@
 use crate::model::components::{
     AttackRange, AttackStats, AttackTimer, Bounty, CollisionRadius, CombatProfile, Dead, Enemy,
-    Health, HomePosition, InAttackRange, Mana, Position, Target, Worker,
+    Health, HomePosition, InAttackRange, King, Mana, Position, Target, Worker,
 };
-use crate::model::constants::{
-    LEFT_BOARD_END, RIGHT_BOARD_END, RIGHT_BOARD_START, SQUARE_SIZE, TOTAL_HEIGHT,
-};
+use crate::model::constants::{LEFT_BOARD_END, RIGHT_BOARD_END, RIGHT_BOARD_START, TOTAL_HEIGHT};
 use crate::model::game_state::DeltaTime;
 use crate::model::messages::CombatEvent;
 use crate::model::player::Players;
@@ -42,10 +40,23 @@ pub fn update_targeting(world: &mut World) {
                 continue;
             }
 
-            // Also check if target is on the same board
+            // Also check if target is on the same board (but only for alive targets)
             if let Some(target_pos) = world.get::<Position>(target.0) {
                 if get_board(pos.x) != get_board(target_pos.x) {
                     to_remove.push(entity);
+                    continue;
+                }
+            }
+
+            // Remove target if the attacker is a leaked enemy (y >= TOTAL_HEIGHT)
+            // but the target is an in-lane entity (y < TOTAL_HEIGHT). Leaked enemies
+            // should only target entities in the king zone.
+            if world.get::<Enemy>(entity).is_some() && pos.y >= TOTAL_HEIGHT {
+                if let Some(target_pos) = world.get::<Position>(target.0) {
+                    if target_pos.y < TOTAL_HEIGHT {
+                        to_remove.push(entity);
+                        continue;
+                    }
                 }
             }
         }
@@ -56,10 +67,12 @@ pub fn update_targeting(world: &mut World) {
 
     let mut commands = Vec::new(); // (Entity, Target)
 
-    // --- 2. UNIT TARGETING (Units target closest Enemy) ---
+    // --- 2. UNIT TARGETING (Units target closest Enemy, in-lane only) ---
+    // Leaked enemies (pos.y >= TOTAL_HEIGHT) are excluded from tower targeting.
     let enemy_positions: Vec<(Entity, Position)> = world
         .query_filtered::<(Entity, &Position), With<Enemy>>()
         .iter(world)
+        .filter(|(_, pos)| pos.y < TOTAL_HEIGHT)
         .map(|(entity, pos)| (entity, Position { x: pos.x, y: pos.y }))
         .collect();
 
@@ -69,6 +82,7 @@ pub fn update_targeting(world: &mut World) {
             Without<Target>,
             Without<Worker>,
             Without<Dead>,
+            Without<King>,
         )>();
         for (unit_entity, unit_pos) in query.iter(world) {
             let unit_board = get_board(unit_pos.x);
@@ -94,9 +108,11 @@ pub fn update_targeting(world: &mut World) {
         }
     }
 
-    // --- ENEMY TARGETING (Enemies target closest non-Worker Unit) ---
+    // --- ENEMY TARGETING (Enemies target closest non-Worker, non-King Unit) ---
+    // Kings are excluded: in-lane enemies drift downward by default and are routed to the
+    // king zone by update_leaked_creeps once they cross TOTAL_HEIGHT.
     let unit_positions: Vec<(Entity, Position)> = world
-        .query_filtered::<(Entity, &Position), (Without<Enemy>, Without<Worker>, Without<Dead>)>()
+        .query_filtered::<(Entity, &Position), (Without<Enemy>, Without<Worker>, Without<King>, Without<Dead>)>()
         .iter(world)
         .map(|(entity, pos)| (entity, Position { x: pos.x, y: pos.y }))
         .collect();
@@ -134,6 +150,69 @@ pub fn update_targeting(world: &mut World) {
     }
 }
 
+/// Validates and updates InAttackRange markers for all entities with targets.
+/// This runs independently of movement to ensure range status is always current,
+/// even when entities are stationary or after other entities die/reposition.
+pub fn update_attack_range_markers(world: &mut World) {
+    // First, remove InAttackRange from any Dead entities
+    let dead_entities_with_range: Vec<Entity> = world
+        .query_filtered::<Entity, (With<Dead>, With<InAttackRange>)>()
+        .iter(world)
+        .collect();
+
+    for entity in dead_entities_with_range {
+        world.entity_mut(entity).remove::<InAttackRange>();
+    }
+
+    // Collect all entity positions for distance calculations (excluding Dead)
+    let entity_positions: Vec<(Entity, Position)> = world
+        .query_filtered::<(Entity, &Position), Without<Dead>>()
+        .iter(world)
+        .map(|(e, p)| (e, *p))
+        .collect();
+
+    let mut markers_to_add = Vec::new();
+    let mut markers_to_remove = Vec::new();
+
+    // Check all entities that have both a target and attack range (excluding Dead)
+    let mut query = world.query_filtered::<(
+        Entity,
+        &Target,
+        &AttackRange,
+        &Position,
+        Option<&InAttackRange>,
+    ), Without<Dead>>();
+
+    for (entity, target, attack_range, pos, in_range_opt) in query.iter(world) {
+        // Find target's position
+        if let Some((_, target_pos)) = entity_positions.iter().find(|(e, _)| *e == target.0) {
+            let dx = target_pos.x - pos.x;
+            let dy = target_pos.y - pos.y;
+            let distance = (dx * dx + dy * dy).sqrt();
+
+            let should_be_in_range = distance <= attack_range.0;
+            let is_in_range = in_range_opt.is_some();
+
+            if should_be_in_range && !is_in_range {
+                markers_to_add.push(entity);
+            } else if !should_be_in_range && is_in_range {
+                markers_to_remove.push(entity);
+            }
+        } else if in_range_opt.is_some() {
+            // Target doesn't exist (despawned) - remove marker
+            markers_to_remove.push(entity);
+        }
+    }
+
+    // Apply marker changes
+    for entity in markers_to_add {
+        world.entity_mut(entity).insert(InAttackRange);
+    }
+    for entity in markers_to_remove {
+        world.entity_mut(entity).remove::<InAttackRange>();
+    }
+}
+
 pub fn update_combat_movement(world: &mut World) {
     let tick_delta = world.resource::<DeltaTime>().0;
     // --- MOVEMENT & COLLISION SYSTEM ---
@@ -143,10 +222,15 @@ pub fn update_combat_movement(world: &mut World) {
         .map(|(e, p, r)| (e, *p, r.0))
         .collect();
 
-    let mut movements = Vec::new();
-    let mut combat_markers = Vec::new(); // (Entity, bool) where true = add, false = remove
+    // Collect king entities for leaked enemy targeting logic
+    let king_entities: Vec<Entity> = world
+        .query_filtered::<Entity, With<King>>()
+        .iter(world)
+        .collect();
 
-    // First pass: Calculate all movement vectors
+    let mut movements = Vec::new();
+
+    // First pass: Calculate all movement vectors (kings are stationary — excluded)
     let mut query = world.query_filtered::<(
         Entity,
         &Position,
@@ -154,7 +238,7 @@ pub fn update_combat_movement(world: &mut World) {
         Option<&AttackRange>,
         &CollisionRadius,
         Option<&Enemy>,
-    ), (Without<Worker>, Without<Dead>)>();
+    ), (Without<Worker>, Without<King>, Without<Dead>)>();
     for (entity, pos, target_opt, attack_range_opt, collision_radius, enemy_opt) in
         query.iter(world)
     {
@@ -174,25 +258,56 @@ pub fn update_combat_movement(world: &mut World) {
 
                 let range = attack_range_opt.map(|r| r.0).unwrap_or(0.0);
 
-                if distance > range && distance > 0.0 {
+                // Enemies chase to contact distance to counter separation, but not beyond attack range.
+                // Towers stop at attack range (normal behavior).
+                // Leaked enemies (targeting the king) chase to full attack range to maintain
+                // offensive capability despite separation forces.
+                let chase_distance = if enemy_opt.is_some() {
+                    // Check if this enemy is leaked (y >= TOTAL_HEIGHT) and targeting a king
+                    let is_leaked = pos.y >= TOTAL_HEIGHT;
+                    let is_targeting_king = king_entities.contains(&target.0);
+
+                    if is_leaked && is_targeting_king {
+                        // Leaked enemies targeting the king chase to their full attack range
+                        range
+                    } else {
+                        // In-lane enemies chase to contact distance (original behavior)
+                        let target_radius = physical_entities
+                            .iter()
+                            .find(|(e, _, _)| *e == target.0)
+                            .map(|(_, _, r)| *r)
+                            .unwrap_or(0.0);
+                        let contact_distance = collision_radius.0 + target_radius;
+                        // Chase to contact OR attack range, whichever is closer
+                        contact_distance.min(range)
+                    }
+                } else {
+                    range
+                };
+
+                if distance > chase_distance && distance > 0.0 {
                     velocity_x += (dx / distance) * SPEED;
                     velocity_y += (dy / distance) * SPEED;
-                    combat_markers.push((entity, false)); // Out of range
-                } else if distance <= range {
-                    combat_markers.push((entity, true)); // In range
                 }
-            } else {
-                combat_markers.push((entity, false)); // No target found
             }
         } else {
             // No target: enemies drift downward towards the opponent's base
             if enemy_opt.is_some() {
                 velocity_y += SPEED;
             }
-            combat_markers.push((entity, false)); // No target assigned
         }
 
         // 2. Separation Force
+        // Leaked enemies targeting the king use reduced separation to allow them to close to attack range.
+        // Without this, separation forces cancel out the chasing force and enemies get stuck beyond range.
+        let use_reduced_separation = if enemy_opt.is_some() && target_opt.is_some() {
+            let is_leaked = pos.y >= TOTAL_HEIGHT;
+            let is_targeting_king = king_entities.contains(&target_opt.unwrap().0);
+            is_leaked && is_targeting_king
+        } else {
+            false
+        };
+
         for (other_entity, other_pos, other_radius) in &physical_entities {
             if entity == *other_entity {
                 continue;
@@ -207,8 +322,15 @@ pub fn update_combat_movement(world: &mut World) {
                 // Overlap detected
                 if distance > 0.0 {
                     // Repulsive force away from neighbor
-                    velocity_x += (dx / distance) * SPEED;
-                    velocity_y += (dy / distance) * SPEED;
+                    let separation_strength = if use_reduced_separation {
+                        // Leaked enemies targeting the king use weaker separation (10% of normal)
+                        // to avoid getting stuck beyond attack range
+                        SPEED * 0.1
+                    } else {
+                        SPEED
+                    };
+                    velocity_x += (dx / distance) * separation_strength;
+                    velocity_y += (dy / distance) * separation_strength;
                 } else {
                     // Exactly on top of each other, push in a random-ish direction based on entity ID
                     let angle = (entity.index() as f32) * 0.1;
@@ -234,9 +356,22 @@ pub fn update_combat_movement(world: &mut World) {
             .map(|h| h.0.x)
             .unwrap_or(0.0);
 
+        let is_enemy = world.get::<Enemy>(entity).is_some();
         if let Some(mut pos) = world.get_mut::<Position>(entity) {
             pos.x += dx;
-            pos.y = (pos.y + dy).clamp(radius, TOTAL_HEIGHT - radius);
+            // Leaked enemies (at or past TOTAL_HEIGHT) enter the king zone.
+            // Enemies use TOTAL_HEIGHT (not TOTAL_HEIGHT - radius) as their y upper bound
+            // so they can actually reach the boundary and trigger the king-zone transition.
+            // Non-enemies (towers) keep the radius margin to avoid clipping the wall.
+            if is_enemy && pos.y + dy >= TOTAL_HEIGHT {
+                use crate::model::constants::KING_Y;
+                use crate::model::king_config::KING_COLLISION_RADIUS;
+                pos.y = (pos.y + dy).clamp(TOTAL_HEIGHT, KING_Y + KING_COLLISION_RADIUS);
+            } else if is_enemy {
+                pos.y = (pos.y + dy).clamp(radius, TOTAL_HEIGHT);
+            } else {
+                pos.y = (pos.y + dy).clamp(radius, TOTAL_HEIGHT - radius);
+            }
 
             if home_x < LEFT_BOARD_END {
                 pos.x = pos.x.clamp(radius, LEFT_BOARD_END - radius);
@@ -244,19 +379,6 @@ pub fn update_combat_movement(world: &mut World) {
                 pos.x = pos
                     .x
                     .clamp(RIGHT_BOARD_START + radius, RIGHT_BOARD_END - radius);
-            }
-        }
-    }
-
-    // Third pass: Apply combat markers
-    for (entity, in_range) in combat_markers {
-        if in_range {
-            if world.entity(entity).get::<InAttackRange>().is_none() {
-                world.entity_mut(entity).insert(InAttackRange);
-            }
-        } else {
-            if world.entity(entity).get::<InAttackRange>().is_some() {
-                world.entity_mut(entity).remove::<InAttackRange>();
             }
         }
     }
@@ -509,45 +631,55 @@ pub fn cleanup_dead_entities(world: &mut World) {
     }
 }
 
-/// System: detects enemies that have broken through the bottom boundary, decrements
-/// the defending player's lives (clamped at 0), and despawns the entity.
-pub fn update_life_loss(world: &mut World) {
-    let breakthrough_threshold = TOTAL_HEIGHT - SQUARE_SIZE;
-
-    // Collect breakthrough enemies: (entity, board_index)
-    let breakthroughs: Vec<(Entity, Option<u8>)> = {
-        let mut query = world.query_filtered::<(Entity, &Position), With<Enemy>>();
-        query
-            .iter(world)
-            .filter(|(_, pos)| pos.y >= breakthrough_threshold)
-            .map(|(entity, pos)| (entity, get_board(pos.x)))
-            .collect()
-    };
-
-    if breakthroughs.is_empty() {
-        return;
-    }
-
-    // Decrement lives for each breakthrough
-    if let Some(mut players) = world.get_resource_mut::<Players>() {
-        for (_, board_opt) in &breakthroughs {
-            if let Some(board_idx) = board_opt {
-                if let Some(player) = players.0.get_mut(*board_idx as usize) {
-                    player.lives = player.lives.saturating_sub(1);
-                }
-            }
-        }
-    }
-
-    // Despawn breakthrough enemies
-    for (entity, _) in breakthroughs {
-        world.despawn(entity);
-    }
-}
-
 pub fn update_mana(mut query: Query<&mut Mana>, time: Res<DeltaTime>) {
     for mut mana in query.iter_mut() {
         mana.current = (mana.current + mana.regen * time.0).min(mana.max);
+    }
+}
+
+/// Detect leaked enemies (pos.y >= TOTAL_HEIGHT) and assign them the King entity
+/// on their same board as a target. Does NOT despawn enemies or decrement lives.
+pub fn update_leaked_creeps(world: &mut World) {
+    use crate::model::components::King;
+
+    // Collect leaked enemies without a target
+    let leaked_enemies: Vec<(Entity, Position)> = world
+        .query_filtered::<(Entity, &Position), With<Enemy>>()
+        .iter(world)
+        .filter(|(entity, pos)| pos.y >= TOTAL_HEIGHT && world.get::<Target>(*entity).is_none())
+        .map(|(e, pos)| (e, *pos))
+        .collect();
+
+    if leaked_enemies.is_empty() {
+        return;
+    }
+
+    // Collect king positions
+    let kings: Vec<(Entity, Position)> = world
+        .query_filtered::<(Entity, &Position), With<King>>()
+        .iter(world)
+        .map(|(e, pos)| (e, *pos))
+        .collect();
+
+    let mut commands: Vec<(Entity, Target)> = Vec::new();
+    for (enemy_entity, enemy_pos) in &leaked_enemies {
+        let enemy_board = get_board(enemy_pos.x);
+        if enemy_board.is_none() {
+            continue;
+        }
+        // Find the king on the same board
+        if let Some((king_entity, _)) = kings
+            .iter()
+            .find(|(_, king_pos)| get_board(king_pos.x) == enemy_board)
+        {
+            commands.push((*enemy_entity, Target(*king_entity)));
+        }
+    }
+
+    for (entity, target) in commands {
+        // Assign the king as the leaked enemy's target.
+        // Do NOT modify attack stats - enemies keep their original combat stats when leaked.
+        world.entity_mut(entity).insert(target);
     }
 }
 
@@ -761,6 +893,7 @@ mod tests {
 
         // 1. Far away: no marker
         update_combat_movement(&mut world);
+        update_attack_range_markers(&mut world);
         assert!(
             world.entity(unit).get::<InAttackRange>().is_none(),
             "Should NOT have InAttackRange when far away"
@@ -769,6 +902,7 @@ mod tests {
         // 2. Within range: has marker
         world.entity_mut(unit).insert(Position { x: 60.0, y: 0.0 });
         update_combat_movement(&mut world);
+        update_attack_range_markers(&mut world);
         assert!(
             world.entity(unit).get::<InAttackRange>().is_some(),
             "Should have InAttackRange when within range"
@@ -777,6 +911,7 @@ mod tests {
         // 3. Move back out: marker removed
         world.entity_mut(unit).insert(Position { x: 0.0, y: 0.0 });
         update_combat_movement(&mut world);
+        update_attack_range_markers(&mut world);
         assert!(
             world.entity(unit).get::<InAttackRange>().is_none(),
             "Should remove InAttackRange when moving out of range"
@@ -1212,6 +1347,7 @@ mod tests {
         // 2. Movement - multiple ticks until in range
         for _ in 0..100 {
             update_combat_movement(&mut world);
+            update_attack_range_markers(&mut world);
         }
         assert!(world.entity(unit).get::<InAttackRange>().is_some());
 
@@ -2093,95 +2229,101 @@ mod tests {
         );
     }
 
+    // --- Task 9.1 TDD: leaked creep routing ---
+
     #[test]
-    fn update_life_loss_decrements_player_lives_and_despawns_enemy() {
-        use crate::model::player::Player;
+    fn update_leaked_creeps_assigns_king_target() {
+        use crate::handler::spawn::spawn_king;
 
         let mut world = World::new();
+        let king = spawn_king(&mut world, 1, 0);
 
-        // Set up two players with 30 lives each
-        let player0 = Player::new(1, "alice".to_string(), 100);
-        let player1 = Player::new(2, "bob".to_string(), 100);
-        world.insert_resource(Players(vec![player0, player1]));
+        // Spawn a leaked enemy (y >= TOTAL_HEIGHT) on left board
+        let leaked_enemy = world
+            .spawn((
+                Position {
+                    x: 300.0,
+                    y: TOTAL_HEIGHT + 1.0,
+                },
+                Enemy,
+                CollisionRadius(10.0),
+            ))
+            .id();
 
-        // Spawn an enemy on board 0 (left board, x < LEFT_BOARD_END) at y >= TOTAL_HEIGHT
-        // TOTAL_HEIGHT = 600.0, SQUARE_SIZE = 60.0, breakthrough threshold = 540.0
-        let enemy = crate::handler::spawn::spawn_enemy(
-            &mut world,
-            Position { x: 100.0, y: 600.0 },
-            Shape::Triangle,
-            1,
-        );
+        update_leaked_creeps(&mut world);
 
-        update_life_loss(&mut world);
-
-        // Player 0's lives should be decremented
-        let players = world.resource::<Players>();
-        assert_eq!(
-            players.0[0].lives, 29,
-            "Player 0 should have lost 1 life from the breakthrough"
-        );
-        assert_eq!(
-            players.0[1].lives, 30,
-            "Player 1 should not have lost any lives"
-        );
-
-        // Enemy should be despawned
+        let target = world.get::<Target>(leaked_enemy);
         assert!(
-            !world.entities().contains(enemy),
-            "Breakthrough enemy should be despawned"
+            target.is_some(),
+            "Leaked enemy should have a Target assigned"
+        );
+        assert_eq!(
+            target.unwrap().0,
+            king,
+            "Leaked enemy should target the king"
         );
     }
 
     #[test]
-    fn update_life_loss_does_not_affect_enemies_below_threshold() {
-        use crate::model::player::Player;
+    fn update_leaked_creeps_does_not_despawn() {
+        use crate::handler::spawn::spawn_king;
 
         let mut world = World::new();
+        let _king = spawn_king(&mut world, 1, 0);
 
-        let player0 = Player::new(1, "alice".to_string(), 100);
-        world.insert_resource(Players(vec![player0]));
+        // Spawn a leaked enemy
+        let leaked_enemy = world
+            .spawn((
+                Position {
+                    x: 300.0,
+                    y: TOTAL_HEIGHT + 1.0,
+                },
+                Enemy,
+                CollisionRadius(10.0),
+            ))
+            .id();
 
-        // Enemy well within board bounds (y = 300.0 < 540.0)
-        let safe_enemy = crate::handler::spawn::spawn_enemy(
+        update_leaked_creeps(&mut world);
+
+        assert!(
+            world.entities().contains(leaked_enemy),
+            "Leaked enemy must NOT be despawned by update_leaked_creeps"
+        );
+    }
+
+    #[test]
+    fn tower_targeting_excludes_leaked_enemies() {
+        use crate::handler::spawn::spawn_king;
+
+        let mut world = World::new();
+        let _king = spawn_king(&mut world, 1, 0);
+
+        // Spawn a tower on left board
+        let tower = crate::handler::spawn::spawn_unit(
             &mut world,
             Position { x: 100.0, y: 300.0 },
-            Shape::Triangle,
+            Shape::Square,
             1,
         );
 
-        update_life_loss(&mut world);
+        // Spawn a leaked enemy (y >= TOTAL_HEIGHT) on left board — towers should ignore it
+        world.spawn((
+            Position {
+                x: 150.0,
+                y: TOTAL_HEIGHT + 5.0,
+            },
+            Enemy,
+            CollisionRadius(10.0),
+        ));
 
-        let players = world.resource::<Players>();
-        assert_eq!(players.0[0].lives, 30, "Lives should remain unchanged");
+        update_targeting(&mut world);
+
+        // Tower should have no target because the only enemy is leaked
+        let target = world.entity(tower).get::<Target>();
         assert!(
-            world.entities().contains(safe_enemy),
-            "Enemy below threshold should not be despawned"
+            target.is_none(),
+            "Tower must NOT target leaked enemies (pos.y >= TOTAL_HEIGHT)"
         );
-    }
-
-    #[test]
-    fn update_life_loss_clamps_at_zero() {
-        use crate::model::player::Player;
-
-        let mut world = World::new();
-
-        // Player with 0 lives already
-        let mut player0 = Player::new(1, "alice".to_string(), 100);
-        player0.lives = 0;
-        world.insert_resource(Players(vec![player0]));
-
-        crate::handler::spawn::spawn_enemy(
-            &mut world,
-            Position { x: 100.0, y: 600.0 },
-            Shape::Triangle,
-            1,
-        );
-
-        update_life_loss(&mut world);
-
-        let players = world.resource::<Players>();
-        assert_eq!(players.0[0].lives, 0, "Lives should not underflow below 0");
     }
 
     #[test]
@@ -2206,6 +2348,203 @@ mod tests {
             "Targetless enemy should move downward (y increased): before={}, after={}",
             y_before,
             y_after
+        );
+    }
+
+    #[test]
+    fn attack_range_markers_updated_when_entities_reposition() {
+        use crate::model::components::{King, Target};
+
+        let mut world = World::new();
+        world.insert_resource(DeltaTime(0.016));
+
+        // Create a king at position (100, 900)
+        let king = world
+            .spawn((
+                Position { x: 100.0, y: 900.0 },
+                CollisionRadius(30.0),
+                Health {
+                    current: 500.0,
+                    max: 500.0,
+                },
+                King,
+                AttackStats {
+                    damage: 50.0,
+                    rate: 1.0,
+                    damage_type: DamageType::PhysicalBasic,
+                },
+                AttackRange(150.0),
+                AttackTimer(0.0),
+            ))
+            .id();
+
+        // Create two squares: one in range (80 pixels away), one out of range (200 pixels away)
+        let square_in_range = crate::handler::spawn::spawn_enemy(
+            &mut world,
+            Position { x: 100.0, y: 820.0 }, // 80 pixels away
+            Shape::Square,
+            1,
+        );
+
+        let square_out_of_range = crate::handler::spawn::spawn_enemy(
+            &mut world,
+            Position { x: 100.0, y: 700.0 }, // 200 pixels away
+            Shape::Square,
+            1,
+        );
+
+        // Assign both squares to target the king
+        world.entity_mut(square_in_range).insert(Target(king));
+        world.entity_mut(square_out_of_range).insert(Target(king));
+
+        // Both squares have 45px attack range (default for squares)
+        world.entity_mut(square_in_range).insert(AttackRange(45.0));
+        world.entity_mut(square_out_of_range).insert(AttackRange(45.0));
+
+        // Run the range marker system
+        update_attack_range_markers(&mut world);
+
+        // The close square should NOT have InAttackRange (80px > 45px range)
+        assert!(
+            world.entity(square_in_range).get::<InAttackRange>().is_none(),
+            "Square 80px away should not have InAttackRange with 45px range"
+        );
+
+        // The far square should NOT have InAttackRange either
+        assert!(
+            world.entity(square_out_of_range).get::<InAttackRange>().is_none(),
+            "Square 200px away should not have InAttackRange"
+        );
+
+        // Now move the first square much closer (within attack range)
+        world.entity_mut(square_in_range).get_mut::<Position>().unwrap().y = 880.0; // 20 pixels away
+
+        // Re-run the range marker system
+        update_attack_range_markers(&mut world);
+
+        // Now the close square SHOULD have InAttackRange (20px < 45px range)
+        assert!(
+            world.entity(square_in_range).get::<InAttackRange>().is_some(),
+            "Square 20px away should have InAttackRange with 45px range"
+        );
+
+        // The far square still should not
+        assert!(
+            world.entity(square_out_of_range).get::<InAttackRange>().is_none(),
+            "Square 200px away should still not have InAttackRange"
+        );
+
+        // Simulate a scenario: kill the first square (add Dead marker)
+        world.entity_mut(square_in_range).insert(Dead);
+
+        // Move the second square closer (simulating repositioning after first dies)
+        world.entity_mut(square_out_of_range).get_mut::<Position>().unwrap().y = 870.0; // 30 pixels away
+
+        // Re-run the range marker system
+        update_attack_range_markers(&mut world);
+
+        // Dead entity should lose InAttackRange (because query excludes Dead entities)
+        assert!(
+            world.entity(square_in_range).get::<InAttackRange>().is_none(),
+            "Dead square should not have InAttackRange"
+        );
+
+        // The repositioned square should now have InAttackRange (30px < 45px)
+        assert!(
+            world.entity(square_out_of_range).get::<InAttackRange>().is_some(),
+            "Square repositioned to 30px away should have InAttackRange with 45px range"
+        );
+    }
+
+    // --- Regression test: leaked enemy combat freeze fix ---
+
+    #[test]
+    fn leaked_square_enemy_maintains_attack_range_despite_separation() {
+        use crate::handler::king::update_king_targeting;
+
+        let mut world = World::new();
+        world.insert_resource(DeltaTime(1.0 / 30.0));
+
+        // Spawn king on left board
+        let king = crate::handler::spawn::spawn_king(&mut world, 1, 0);
+
+        // Spawn a Square enemy (45px attack range) that has leaked
+        let enemy = crate::handler::spawn::spawn_enemy(
+            &mut world,
+            Position {
+                x: 300.0,  // Same x as left king
+                y: TOTAL_HEIGHT + 5.0,  // Just above TOTAL_HEIGHT (leaked)
+            },
+            Shape::Square,
+            1,
+        );
+
+        // Simulate the game loop: leaked enemies get assigned king as target
+        update_leaked_creeps(&mut world);
+        update_king_targeting(&mut world);
+
+        // Run movement for several ticks to let enemies approach the king
+        for _ in 0..100 {
+            update_combat_movement(&mut world);
+            update_attack_range_markers(&mut world);
+        }
+
+        // Verify the enemy has InAttackRange marker
+        let has_in_range = world.entity(enemy).get::<InAttackRange>().is_some();
+        let enemy_pos = world.entity(enemy).get::<Position>().unwrap();
+        let king_pos = world.entity(king).get::<Position>().unwrap();
+        let distance = ((king_pos.x - enemy_pos.x).powi(2) + (king_pos.y - enemy_pos.y).powi(2)).sqrt();
+
+        assert!(
+            has_in_range,
+            "Leaked Square enemy (45px range) should be able to attack the king at {:.1}px distance",
+            distance
+        );
+    }
+
+    #[test]
+    fn multiple_leaked_enemies_can_all_attack_king_despite_crowding() {
+        use crate::handler::king::update_king_targeting;
+
+        let mut world = World::new();
+        world.insert_resource(DeltaTime(1.0 / 30.0));
+
+        // Spawn king on left board
+        let _king = crate::handler::spawn::spawn_king(&mut world, 1, 0);
+
+        // Spawn 5 Square enemies (all with 45px range) around the king
+        let enemies: Vec<_> = (0..5)
+            .map(|i| {
+                let angle = (i as f32 / 5.0) * 2.0 * std::f32::consts::PI;
+                let x = 300.0 + angle.cos() * 30.0;
+                let y = TOTAL_HEIGHT + 10.0 + angle.sin() * 30.0;
+                crate::handler::spawn::spawn_enemy(&mut world, Position { x, y }, Shape::Square, 1)
+            })
+            .collect();
+
+        // Simulate the game loop
+        update_leaked_creeps(&mut world);
+        update_king_targeting(&mut world);
+
+        // Run movement for many ticks to let separation forces push enemies apart
+        for _ in 0..200 {
+            update_combat_movement(&mut world);
+            update_attack_range_markers(&mut world);
+        }
+
+        // Count how many enemies can still attack
+        let attacking_enemies = enemies
+            .iter()
+            .filter(|&&e| world.entity(e).get::<InAttackRange>().is_some())
+            .count();
+
+        // With reduced separation (10%), multiple enemies should be able to maintain attack range.
+        // Not all 5 may fit in a tight circle (due to lateral separation from each other),
+        // but at least 2 should be able to attack (vs. 0 before the fix).
+        assert!(
+            attacking_enemies >= 2,
+            "At least 2 out of 5 leaked enemies should maintain attack range despite separation forces (got {})",
+            attacking_enemies
         );
     }
 }

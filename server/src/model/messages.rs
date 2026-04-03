@@ -32,6 +32,7 @@ pub enum ClientMessage {
     HireWorker {},
     RequestUnitInfo { entity_id: u32 },
     SendUnit { shape: Shape },
+    UpgradeKing {},
 }
 
 #[derive(Serialize, Clone, Debug)]
@@ -54,6 +55,7 @@ pub struct Unit {
     pub current_mana: Option<f32>,
     pub max_mana: Option<f32>,
     pub worker_state: Option<String>,
+    pub is_king: bool,
 }
 
 #[derive(Serialize, Clone, Debug)]
@@ -74,6 +76,7 @@ pub struct SerializableGameState {
     pub players: Vec<Player>,
     pub phase: GamePhase,
     pub phase_timer: f32,
+    pub winner_id: Option<i64>,
 }
 
 #[derive(Serialize, Clone, Debug)]
@@ -90,6 +93,30 @@ pub enum ServerMessage {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn deserialize_upgrade_king() {
+        let json = r#"{"action": "upgradeKing", "payload": {}}"#;
+        let msg: ClientMessage = serde_json::from_str(json).unwrap();
+        match msg {
+            ClientMessage::UpgradeKing {} => assert!(true),
+            _ => panic!("Wrong message type"),
+        }
+    }
+
+    #[test]
+    fn serializable_game_state_includes_winner_id() {
+        use crate::model::game_state::GamePhase;
+        let state = SerializableGameState {
+            units: vec![],
+            players: vec![],
+            phase: GamePhase::Build,
+            phase_timer: 0.0,
+            winner_id: Some(42),
+        };
+        let json = serde_json::to_string(&state).unwrap();
+        assert!(json.contains("\"winner_id\":42"));
+    }
 
     #[test]
     fn deserialize_send_unit() {
@@ -126,6 +153,7 @@ mod tests {
             current_mana: Some(50.0),
             max_mana: Some(100.0),
             worker_state: None,
+            is_king: false,
         };
 
         let json = serde_json::to_string(&unit).unwrap();
@@ -149,6 +177,7 @@ mod tests {
             current_mana: None,
             max_mana: None,
             worker_state: Some("Mining".into()),
+            is_king: false,
         };
 
         let json = serde_json::to_string(&unit).unwrap();

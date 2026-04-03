@@ -10,13 +10,6 @@ pub enum GamePhase {
     GameOver,
 }
 
-/// ECS Resource tracking the remaining time in the current phase (seconds).
-#[derive(Debug, Resource)]
-pub struct PhaseTimer(pub f32);
-
-/// ECS Resource tracking the current wave number.
-#[derive(Debug, Resource)]
-pub struct WaveNumber(pub u32);
 
 /// Per-tick delta time inserted into the World at the start of each game tick.
 #[derive(Debug, Resource)]
@@ -38,8 +31,6 @@ impl GameState {
     pub fn new() -> Self {
         let mut world = World::new();
         world.insert_resource(GamePhase::Build);
-        world.insert_resource(PhaseTimer(30.0));
-        world.insert_resource(WaveNumber(1));
         Self {
             world,
             phase: GamePhase::Build,
@@ -57,8 +48,6 @@ impl GameState {
         self.phase_timer = 30.0;
         self.wave_number = 1;
         self.world.insert_resource(GamePhase::Build);
-        self.world.insert_resource(PhaseTimer(30.0));
-        self.world.insert_resource(WaveNumber(1));
     }
 }
 
@@ -105,30 +94,6 @@ mod tests {
         assert_eq!(*phase.unwrap(), GamePhase::Build);
     }
 
-    #[test]
-    fn test_phase_timer_resource_inserted_into_world() {
-        let state = GameState::new();
-        let timer = state.world.get_resource::<PhaseTimer>();
-        assert!(
-            timer.is_some(),
-            "PhaseTimer resource must be present in world"
-        );
-        assert!(
-            (timer.unwrap().0 - 30.0).abs() < f32::EPSILON,
-            "PhaseTimer must start at 30 seconds"
-        );
-    }
-
-    #[test]
-    fn test_wave_number_resource_inserted_into_world() {
-        let state = GameState::new();
-        let wave = state.world.get_resource::<WaveNumber>();
-        assert!(
-            wave.is_some(),
-            "WaveNumber resource must be present in world"
-        );
-        assert_eq!(wave.unwrap().0, 1, "WaveNumber must start at 1");
-    }
 
     #[test]
     fn test_delta_time_resource_can_be_inserted_and_read() {
