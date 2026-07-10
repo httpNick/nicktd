@@ -8,8 +8,8 @@ use bevy_ecs::prelude::Entity;
 
 pub async fn remove_player_from_lobby(lobby_id: usize, player_id: i64, server_state: &ServerState) {
     {
-        let mut lobbies = server_state.lobbies.lock().await;
-        if let Some(lobby) = lobbies.get_mut(lobby_id) {
+        if let Some(lobby_arc) = server_state.lobbies.get(lobby_id) {
+            let mut lobby = lobby_arc.lock().await;
             // A game is in progress if the lobby was full and no result exists yet.
             let game_in_progress = lobby.is_full()
                 && lobby.game_state.phase != GamePhase::GameOver
@@ -80,8 +80,7 @@ mod tests {
         let player_id = 123;
 
         {
-            let mut lobbies = server_state.lobbies.lock().await;
-            let lobby = &mut lobbies[0];
+            let mut lobby = server_state.lobbies[0].lock().await;
             lobby
                 .players
                 .push(Player::new(player_id, "test".into(), 100));
@@ -103,8 +102,7 @@ mod tests {
         remove_player_from_lobby(0, player_id, &server_state).await;
 
         {
-            let mut lobbies = server_state.lobbies.lock().await;
-            let lobby = &mut lobbies[0];
+            let mut lobby = server_state.lobbies[0].lock().await;
 
             let mut query = lobby.game_state.world.query::<&PlayerIdComponent>();
             let owners: Vec<i64> = query.iter(&lobby.game_state.world).map(|o| o.0).collect();
@@ -136,8 +134,7 @@ mod tests {
 
         let initial_generation;
         {
-            let mut lobbies = server_state.lobbies.lock().await;
-            let lobby = &mut lobbies[0];
+            let mut lobby = server_state.lobbies[0].lock().await;
             lobby.players.push(Player::new(leaver_id, "p1".into(), 100));
             lobby.players.push(Player::new(stayer_id, "p2".into(), 100));
             lobby.game_state.phase = GamePhase::Combat;
@@ -147,8 +144,7 @@ mod tests {
         remove_player_from_lobby(0, leaver_id, &server_state).await;
 
         {
-            let mut lobbies = server_state.lobbies.lock().await;
-            let lobby = &mut lobbies[0];
+            let mut lobby = server_state.lobbies[0].lock().await;
             assert_eq!(
                 lobby.game_state.phase,
                 GamePhase::GameOver,
@@ -179,8 +175,7 @@ mod tests {
         let loser_id = 2;
 
         {
-            let mut lobbies = server_state.lobbies.lock().await;
-            let lobby = &mut lobbies[0];
+            let mut lobby = server_state.lobbies[0].lock().await;
             lobby.players.push(Player::new(winner_id, "p1".into(), 100));
             lobby.players.push(Player::new(loser_id, "p2".into(), 100));
             lobby.game_state.phase = GamePhase::GameOver;
@@ -191,8 +186,7 @@ mod tests {
         remove_player_from_lobby(0, loser_id, &server_state).await;
 
         {
-            let mut lobbies = server_state.lobbies.lock().await;
-            let lobby = &mut lobbies[0];
+            let mut lobby = server_state.lobbies[0].lock().await;
             assert_eq!(
                 lobby.winner_id,
                 Some(winner_id),
@@ -212,8 +206,7 @@ mod tests {
         let server_state = ServerStateData::new(db_pool);
 
         {
-            let mut lobbies = server_state.lobbies.lock().await;
-            let lobby = &mut lobbies[0];
+            let mut lobby = server_state.lobbies[0].lock().await;
             // Only one player waiting; no game has started.
             lobby.players.push(Player::new(1, "p1".into(), 100));
         }
@@ -221,8 +214,7 @@ mod tests {
         remove_player_from_lobby(0, 1, &server_state).await;
 
         {
-            let mut lobbies = server_state.lobbies.lock().await;
-            let lobby = &mut lobbies[0];
+            let mut lobby = server_state.lobbies[0].lock().await;
             assert_eq!(lobby.winner_id, None, "No winner without an active game");
             assert_ne!(
                 lobby.game_state.phase,
@@ -243,8 +235,7 @@ mod tests {
         let server_state = ServerStateData::new(db_pool);
 
         {
-            let mut lobbies = server_state.lobbies.lock().await;
-            let lobby = &mut lobbies[0];
+            let mut lobby = server_state.lobbies[0].lock().await;
             lobby.players.push(Player::new(1, "p1".into(), 100));
             lobby.players.push(Player::new(2, "p2".into(), 100));
             lobby.game_state.phase = GamePhase::GameOver;
@@ -255,8 +246,7 @@ mod tests {
         remove_player_from_lobby(0, 2, &server_state).await;
 
         {
-            let mut lobbies = server_state.lobbies.lock().await;
-            let lobby = &mut lobbies[0];
+            let mut lobby = server_state.lobbies[0].lock().await;
             assert_eq!(
                 lobby.winner_id, None,
                 "winner_id must be cleared when the lobby resets for a new game"
@@ -279,8 +269,7 @@ mod tests {
         let player_id = 789;
 
         {
-            let mut lobbies = server_state.lobbies.lock().await;
-            let lobby = &mut lobbies[0];
+            let mut lobby = server_state.lobbies[0].lock().await;
             lobby
                 .players
                 .push(Player::new(player_id, "test".into(), 100));
@@ -294,8 +283,7 @@ mod tests {
         cleanup(0, player_id, &server_state).await;
 
         {
-            let mut lobbies = server_state.lobbies.lock().await;
-            let lobby = &mut lobbies[0];
+            let mut lobby = server_state.lobbies[0].lock().await;
 
             let mut query = lobby.game_state.world.query::<&PlayerIdComponent>();
             let owners: Vec<i64> = query.iter(&lobby.game_state.world).map(|o| o.0).collect();

@@ -48,8 +48,8 @@ pub async fn pre_game_loop(
                             if let Ok(ClientMessage::JoinLobby(lobby_id)) = serde_json::from_str(&text) {
                                 let mut should_break = false;
                                 {
-                                    let mut lobbies = server_state.lobbies.lock().await;
-                                    if let Some(lobby) = lobbies.get_mut(lobby_id) {
+                                    if let Some(lobby_arc) = server_state.lobbies.get(lobby_id) {
+                                        let mut lobby = lobby_arc.lock().await;
                                         if lobby.players.len() < 2 {
                                             // A finished match may still occupy this lobby
                                             // (e.g. the winner stayed after a forfeit).

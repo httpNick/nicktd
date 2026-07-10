@@ -67,6 +67,251 @@ pub fn try_sell_entity(
     Some(refund)
 }
 
+/// Result of handling one client message. Direct replies are returned (not sent)
+/// so the caller can release the lobby lock before any network `await`.
+pub enum MessageOutcome {
+    /// Send this message to the requesting client (after unlocking the lobby).
+    Reply(crate::model::messages::ServerMessage),
+    /// Mutation applied; any broadcast was already sent via the lobby channel.
+    Handled,
+    /// The player asked to leave the lobby.
+    LeaveLobby,
+    /// Message not applicable in-game (e.g. JoinLobby).
+    Ignored,
+}
+
+/// Applies a client message to the lobby. Synchronous on purpose: it runs under
+/// the lobby lock and must never await. Broadcasts (`lobby.broadcast_gamestate`)
+/// are channel sends, not awaits, so they are safe here.
+pub fn handle_client_message(
+    lobby: &mut crate::model::lobby::Lobby,
+    player_id: i64,
+    msg: ClientMessage,
+) -> MessageOutcome {
+    use crate::model::messages::ServerMessage;
+
+    match msg {
+        ClientMessage::Place(p) => {
+            if lobby.game_state.phase != GamePhase::Build {
+                return MessageOutcome::Reply(ServerMessage::Error(
+                    "Tower placement is only allowed during the build phase.".into(),
+                ));
+            }
+            let profile = crate::model::unit_config::get_unit_profile(p.shape);
+            let player_idx = lobby.players.iter().position(|pl| pl.id == player_id);
+
+            let Some(idx) = player_idx else {
+                return MessageOutcome::Ignored;
+            };
+            if p.row >= KING_PLACEMENT_ROW_LIMIT || p.col >= 10 {
+                return MessageOutcome::Reply(ServerMessage::Error(
+                    "Invalid placement coordinates.".into(),
+                ));
+            }
+
+            let x = if idx == 0 {
+                (p.col as f32 * SQUARE_SIZE) + (SQUARE_SIZE / 2.0)
+            } else {
+                crate::model::constants::RIGHT_BOARD_START
+                    + (p.col as f32 * SQUARE_SIZE)
+                    + (SQUARE_SIZE / 2.0)
+            };
+            let y = (p.row as f32 * SQUARE_SIZE) + (SQUARE_SIZE / 2.0);
+
+            if is_cell_occupied(&mut lobby.game_state.world, x, y) {
+                return MessageOutcome::Reply(ServerMessage::Error(
+                    "That square is already occupied.".into(),
+                ));
+            }
+
+            if lobby.players[idx].try_spend_gold(profile.gold_cost) {
+                crate::handler::spawn::spawn_unit(
+                    &mut lobby.game_state.world,
+                    Position { x, y },
+                    p.shape,
+                    player_id,
+                );
+                lobby.broadcast_gamestate();
+                MessageOutcome::Handled
+            } else {
+                MessageOutcome::Reply(ServerMessage::Error(format!(
+                    "Insufficient gold for {:?} (cost: {})",
+                    p.shape, profile.gold_cost
+                )))
+            }
+        }
+        ClientMessage::SkipToCombat => {
+            lobby.game_state.phase_timer = 0.0;
+            MessageOutcome::Handled
+        }
+        ClientMessage::HireWorker {} => {
+            let player_idx = lobby.players.iter().position(|p| p.id == player_id);
+            let Some(idx) = player_idx else {
+                return MessageOutcome::Ignored;
+            };
+            if lobby.players[idx].try_spend_gold(50) {
+                let targets = TargetPositions {
+                    vein: crate::handler::worker::VEIN_POSITIONS[idx],
+                    cart: crate::handler::worker::CART_POSITIONS[idx],
+                };
+                crate::handler::spawn::spawn_worker(&mut lobby.game_state.world, player_id, targets);
+                lobby.broadcast_gamestate();
+                MessageOutcome::Handled
+            } else {
+                MessageOutcome::Reply(ServerMessage::Error(
+                    "Insufficient gold for Worker (cost: 50)".into(),
+                ))
+            }
+        }
+        ClientMessage::SendUnit { shape } => {
+            let player_idx = lobby.players.iter().position(|p| p.id == player_id);
+            let Some(idx) = player_idx else {
+                return MessageOutcome::Ignored;
+            };
+            let sent_profile = crate::model::unit_config::get_sent_unit_profile(shape);
+            if lobby.players[idx].try_spend_gold(sent_profile.send_cost) {
+                lobby.players[idx].spawning_queue.push(shape);
+                lobby.players[idx].income += sent_profile.income;
+                lobby.broadcast_gamestate();
+                MessageOutcome::Handled
+            } else {
+                MessageOutcome::Reply(ServerMessage::Error(format!(
+                    "Insufficient gold for {} (cost: {})",
+                    sent_profile.name, sent_profile.send_cost
+                )))
+            }
+        }
+        ClientMessage::LeaveLobby => MessageOutcome::LeaveLobby,
+        ClientMessage::SellById { entity_id } => {
+            if lobby.game_state.phase != GamePhase::Build {
+                return MessageOutcome::Reply(ServerMessage::Error(
+                    "Tower selling is only allowed during the build phase.".into(),
+                ));
+            }
+            if try_sell_entity(lobby, player_id, entity_id).is_some() {
+                lobby.broadcast_gamestate();
+            }
+            MessageOutcome::Handled
+        }
+        ClientMessage::RequestUnitInfo { entity_id } => {
+            let mut query = lobby.game_state.world.query::<(
+                Entity,
+                Option<&AttackStats>,
+                Option<&AttackRange>,
+                Option<&DefenseStats>,
+                Option<&ShapeComponent>,
+                Option<&Boss>,
+                Option<&PlayerIdComponent>,
+                Option<&Worker>,
+            )>();
+            let found = query
+                .iter(&lobby.game_state.world)
+                .find(|(entity, ..)| entity.to_bits() == entity_id)
+                .map(
+                    |(_, attack_stats, attack_range, defense_stats, shape_comp, boss, owner, worker)| {
+                        (
+                            attack_stats.map(|s| s.damage),
+                            attack_stats.map(|s| s.rate),
+                            attack_stats.map(|s| s.damage_type),
+                            attack_range.map(|r| r.0),
+                            defense_stats.map(|d| d.armor),
+                            shape_comp.map(|s| s.0),
+                            boss.is_some(),
+                            owner.map(|o| o.0),
+                            worker.is_some(),
+                        )
+                    },
+                );
+
+            let Some((
+                attack_damage,
+                attack_rate,
+                damage_type,
+                attack_range,
+                armor,
+                shape,
+                is_boss,
+                owner_id,
+                is_worker,
+            )) = found
+            else {
+                return MessageOutcome::Ignored;
+            };
+            let sell_value = match (owner_id, shape, is_worker) {
+                (Some(oid), Some(sh), false) if oid == player_id => {
+                    let profile = crate::model::unit_config::get_unit_profile(sh);
+                    Some((profile.gold_cost as f32 * 0.75) as u32)
+                }
+                _ => None,
+            };
+            let info = crate::model::messages::UnitInfoData {
+                entity_id,
+                attack_damage,
+                attack_rate,
+                attack_range,
+                damage_type,
+                armor,
+                is_boss,
+                sell_value,
+            };
+            MessageOutcome::Reply(ServerMessage::UnitInfo(info))
+        }
+        ClientMessage::UpgradeKing {} => {
+            if lobby.game_state.phase != GamePhase::Build {
+                return MessageOutcome::Reply(ServerMessage::Error(
+                    "King upgrades are only available during the build phase.".into(),
+                ));
+            }
+            let player_idx = lobby.players.iter().position(|p| p.id == player_id);
+            let Some(idx) = player_idx else {
+                return MessageOutcome::Ignored;
+            };
+            let current_tier = lobby.players[idx].king_tier;
+            if current_tier >= 4 {
+                return MessageOutcome::Reply(ServerMessage::Error(
+                    "King is already at maximum tier.".into(),
+                ));
+            }
+            let tier = &KING_UPGRADE_TIERS[current_tier as usize];
+            if !lobby.players[idx].can_afford(tier.cost) {
+                return MessageOutcome::Reply(ServerMessage::Error(
+                    "Insufficient gold for king upgrade.".into(),
+                ));
+            }
+            // Deduct gold, increment tier, add income.
+            lobby.players[idx].gold -= tier.cost;
+            lobby.players[idx].king_tier += 1;
+            lobby.players[idx].income += tier.income_delta;
+            let hp_delta = tier.hp_delta;
+            let new_damage = tier.new_damage;
+            // Find and update the king entity.
+            let king_entity = {
+                let mut q = lobby
+                    .game_state
+                    .world
+                    .query::<(Entity, &PlayerIdComponent, &King)>();
+                q.iter(&lobby.game_state.world)
+                    .find(|(_, pid, _)| pid.0 == player_id)
+                    .map(|(e, _, _)| e)
+            };
+            if let Some(king_e) = king_entity {
+                if let Some(mut health) = lobby.game_state.world.get_mut::<Health>(king_e) {
+                    health.max += hp_delta;
+                    health.current = (health.current + hp_delta).min(health.max);
+                }
+                if let Some(mut stats) = lobby.game_state.world.get_mut::<AttackStats>(king_e) {
+                    stats.damage = new_damage;
+                }
+                lobby.broadcast_gamestate();
+                MessageOutcome::Handled
+            } else {
+                MessageOutcome::Reply(ServerMessage::Error("King not found.".into()))
+            }
+        }
+        _ => MessageOutcome::Ignored,
+    }
+}
+
 pub async fn in_game_loop(
     ws_sender: &mut SplitSink<UpgradedWebSocket, Message>,
     ws_receiver: &mut SplitStream<UpgradedWebSocket>,
@@ -75,11 +320,11 @@ pub async fn in_game_loop(
     player_id: i64,
     shutdown_rx: &mut mpsc::Receiver<()>,
 ) -> InGameLoopResult {
-    let mut game_rx = {
-        let lobbies = server_state.lobbies.lock().await;
-        lobbies[lobby_id].tx.subscribe()
-    };
-    server_state.lobbies.lock().await[lobby_id].broadcast_gamestate();
+    let mut game_rx = server_state.lobbies[lobby_id].lock().await.tx.subscribe();
+    server_state.lobbies[lobby_id]
+        .lock()
+        .await
+        .broadcast_gamestate();
 
     loop {
         tokio::select! {
@@ -91,192 +336,16 @@ pub async fn in_game_loop(
                     Some(Ok(msg)) => {
                         if let Message::Text(text) = msg {
                             if let Ok(client_msg) = serde_json::from_str::<ClientMessage>(&text) {
-                                let mut lobbies = server_state.lobbies.lock().await;
-                                let lobby = &mut lobbies[lobby_id];
-                                match client_msg {
-                                    ClientMessage::Place(p) => {
-                                        if lobby.game_state.phase != GamePhase::Build {
-                                            let _ = crate::routes::ws::send_message(ws_sender, crate::model::messages::ServerMessage::Error("Tower placement is only allowed during the build phase.".into())).await;
-                                            continue;
-                                        }
-                                        let profile = crate::model::unit_config::get_unit_profile(p.shape);
-                                        let player_idx = lobby.players.iter().position(|pl| pl.id == player_id);
-
-                                        if let Some(idx) = player_idx {
-                                            if p.row >= KING_PLACEMENT_ROW_LIMIT || p.col >= 10 {
-                                                let _ = crate::routes::ws::send_message(ws_sender, crate::model::messages::ServerMessage::Error("Invalid placement coordinates.".into())).await;
-                                                continue;
-                                            }
-
-                                            let x = if idx == 0 {
-                                                (p.col as f32 * SQUARE_SIZE) + (SQUARE_SIZE / 2.0)
-                                            } else {
-                                                crate::model::constants::RIGHT_BOARD_START + (p.col as f32 * SQUARE_SIZE) + (SQUARE_SIZE / 2.0)
-                                            };
-                                            let y = (p.row as f32 * SQUARE_SIZE) + (SQUARE_SIZE / 2.0);
-
-                                            if is_cell_occupied(&mut lobby.game_state.world, x, y) {
-                                                let _ = crate::routes::ws::send_message(ws_sender, crate::model::messages::ServerMessage::Error("That square is already occupied.".into())).await;
-                                                continue;
-                                            }
-
-                                            if lobby.players[idx].try_spend_gold(profile.gold_cost) {
-                                                crate::handler::spawn::spawn_unit(
-                                                    &mut lobby.game_state.world,
-                                                    Position { x, y },
-                                                    p.shape,
-                                                    player_id,
-                                                );
-                                                lobby.broadcast_gamestate();
-                                            } else {
-                                                let error_msg = format!("Insufficient gold for {:?} (cost: {})", p.shape, profile.gold_cost);
-                                                let _ = crate::routes::ws::send_message(ws_sender, crate::model::messages::ServerMessage::Error(error_msg)).await;
-                                            }
-                                        }
+                                let outcome = {
+                                    let mut lobby = server_state.lobbies[lobby_id].lock().await;
+                                    handle_client_message(&mut lobby, player_id, client_msg)
+                                }; // lobby guard dropped here, before any network await
+                                match outcome {
+                                    MessageOutcome::Reply(reply) => {
+                                        let _ = crate::routes::ws::send_message(ws_sender, reply).await;
                                     }
-                                    ClientMessage::SkipToCombat => {
-                                        lobby.game_state.phase_timer = 0.0;
-                                    }
-                                    ClientMessage::HireWorker {} => {
-                                        let player_idx = lobby.players.iter().position(|p| p.id == player_id);
-                                        if let Some(idx) = player_idx {
-                                            if lobby.players[idx].try_spend_gold(50) {
-                                                let targets = TargetPositions {
-                                                    vein: crate::handler::worker::VEIN_POSITIONS[idx],
-                                                    cart: crate::handler::worker::CART_POSITIONS[idx],
-                                                };
-
-                                                crate::handler::spawn::spawn_worker(
-                                                    &mut lobby.game_state.world,
-                                                    player_id,
-                                                    targets,
-                                                );
-                                                lobby.broadcast_gamestate();
-                                            } else {
-                                                let _ = crate::routes::ws::send_message(ws_sender, crate::model::messages::ServerMessage::Error("Insufficient gold for Worker (cost: 50)".into())).await;
-                                            }
-                                        }
-                                    }
-                                    ClientMessage::SendUnit { shape } => {
-                                        let player_idx = lobby.players.iter().position(|p| p.id == player_id);
-                                        if let Some(idx) = player_idx {
-                                            let sent_profile = crate::model::unit_config::get_sent_unit_profile(shape);
-                                            if lobby.players[idx].try_spend_gold(sent_profile.send_cost) {
-                                                lobby.players[idx].spawning_queue.push(shape);
-                                                lobby.players[idx].income += sent_profile.income;
-                                                lobby.broadcast_gamestate();
-                                            } else {
-                                                let error_msg = format!(
-                                                    "Insufficient gold for {} (cost: {})",
-                                                    sent_profile.name, sent_profile.send_cost
-                                                );
-                                                let _ = crate::routes::ws::send_message(ws_sender, crate::model::messages::ServerMessage::Error(error_msg)).await;
-                                            }
-                                        }
-                                    }
-                                    ClientMessage::LeaveLobby => break InGameLoopResult::PlayerLeft,
-                                    ClientMessage::SellById { entity_id } => {
-                                        if lobby.game_state.phase != GamePhase::Build {
-                                            let _ = crate::routes::ws::send_message(ws_sender, crate::model::messages::ServerMessage::Error("Tower selling is only allowed during the build phase.".into())).await;
-                                            continue;
-                                        }
-
-                                        if try_sell_entity(lobby, player_id, entity_id).is_some() {
-                                            lobby.broadcast_gamestate();
-                                        }
-                                    }
-                                    ClientMessage::RequestUnitInfo { entity_id } => {
-                                        let mut query = lobby.game_state.world.query::<(
-                                            Entity,
-                                            Option<&AttackStats>,
-                                            Option<&AttackRange>,
-                                            Option<&DefenseStats>,
-                                            Option<&ShapeComponent>,
-                                            Option<&Boss>,
-                                            Option<&PlayerIdComponent>,
-                                            Option<&Worker>,
-                                        )>();
-                                        let found = query
-                                            .iter(&lobby.game_state.world)
-                                            .find(|(entity, ..)| entity.to_bits() == entity_id)
-                                            .map(|(_, attack_stats, attack_range, defense_stats, shape_comp, boss, owner, worker)| (
-                                                attack_stats.map(|s| s.damage),
-                                                attack_stats.map(|s| s.rate),
-                                                attack_stats.map(|s| s.damage_type),
-                                                attack_range.map(|r| r.0),
-                                                defense_stats.map(|d| d.armor),
-                                                shape_comp.map(|s| s.0),
-                                                boss.is_some(),
-                                                owner.map(|o| o.0),
-                                                worker.is_some(),
-                                            ));
-
-                                        if let Some((attack_damage, attack_rate, damage_type, attack_range, armor, shape, is_boss, owner_id, is_worker)) = found {
-                                            let sell_value = match (owner_id, shape, is_worker) {
-                                                (Some(oid), Some(sh), false) if oid == player_id => {
-                                                    let profile = crate::model::unit_config::get_unit_profile(sh);
-                                                    Some((profile.gold_cost as f32 * 0.75) as u32)
-                                                }
-                                                _ => None,
-                                            };
-                                            let info = crate::model::messages::UnitInfoData {
-                                                entity_id,
-                                                attack_damage,
-                                                attack_rate,
-                                                attack_range,
-                                                damage_type,
-                                                armor,
-                                                is_boss,
-                                                sell_value,
-                                            };
-                                            let _ = crate::routes::ws::send_message(ws_sender, crate::model::messages::ServerMessage::UnitInfo(info)).await;
-                                        }
-                                    }
-                                    ClientMessage::UpgradeKing {} => {
-                                        if lobby.game_state.phase != GamePhase::Build {
-                                            let _ = crate::routes::ws::send_message(ws_sender, crate::model::messages::ServerMessage::Error("King upgrades are only available during the build phase.".into())).await;
-                                            continue;
-                                        }
-                                        let player_idx = lobby.players.iter().position(|p| p.id == player_id);
-                                        if let Some(idx) = player_idx {
-                                            let current_tier = lobby.players[idx].king_tier;
-                                            if current_tier >= 4 {
-                                                let _ = crate::routes::ws::send_message(ws_sender, crate::model::messages::ServerMessage::Error("King is already at maximum tier.".into())).await;
-                                                continue;
-                                            }
-                                            let tier = &KING_UPGRADE_TIERS[current_tier as usize];
-                                            if !lobby.players[idx].can_afford(tier.cost) {
-                                                let _ = crate::routes::ws::send_message(ws_sender, crate::model::messages::ServerMessage::Error("Insufficient gold for king upgrade.".into())).await;
-                                                continue;
-                                            }
-                                            // Deduct gold, increment tier, add income.
-                                            lobby.players[idx].gold -= tier.cost;
-                                            lobby.players[idx].king_tier += 1;
-                                            lobby.players[idx].income += tier.income_delta;
-                                            let hp_delta = tier.hp_delta;
-                                            let new_damage = tier.new_damage;
-                                            // Find and update the king entity.
-                                            let king_entity = {
-                                                let mut q = lobby.game_state.world.query::<(Entity, &PlayerIdComponent, &King)>();
-                                                q.iter(&lobby.game_state.world)
-                                                    .find(|(_, pid, _)| pid.0 == player_id)
-                                                    .map(|(e, _, _)| e)
-                                            };
-                                            if let Some(king_e) = king_entity {
-                                                if let Some(mut health) = lobby.game_state.world.get_mut::<Health>(king_e) {
-                                                    health.max += hp_delta;
-                                                    health.current = (health.current + hp_delta).min(health.max);
-                                                }
-                                                if let Some(mut stats) = lobby.game_state.world.get_mut::<AttackStats>(king_e) {
-                                                    stats.damage = new_damage;
-                                                }
-                                                lobby.broadcast_gamestate();
-                                            } else {
-                                                let _ = crate::routes::ws::send_message(ws_sender, crate::model::messages::ServerMessage::Error("King not found.".into())).await;
-                                            }
-                                        }
-                                    }
-                                    _ => {}
+                                    MessageOutcome::LeaveLobby => break InGameLoopResult::PlayerLeft,
+                                    MessageOutcome::Handled | MessageOutcome::Ignored => {}
                                 }
                             }
                         }
@@ -506,6 +575,98 @@ mod tests {
             1,
             "Unit should be spawned during build phase"
         );
+    }
+
+    // --- handle_client_message tests (real handler, not simulated logic) ---
+
+    #[test]
+    fn handle_place_spawns_tower_and_deducts_gold() {
+        use crate::model::messages::ClientMessage;
+
+        let mut lobby = Lobby::new();
+        lobby.players.push(Player::new(1, "p1".into(), 100));
+        let msg = ClientMessage::Place(PlaceMessage {
+            shape: Shape::Square,
+            row: 1,
+            col: 1,
+        });
+
+        let outcome = handle_client_message(&mut lobby, 1, msg);
+
+        assert!(matches!(outcome, MessageOutcome::Handled));
+        assert_eq!(lobby.players[0].gold, 75);
+        let mut query = lobby.game_state.world.query::<&ShapeComponent>();
+        assert_eq!(query.iter(&lobby.game_state.world).count(), 1);
+    }
+
+    #[test]
+    fn handle_place_rejects_occupied_cell_with_reply() {
+        use crate::model::messages::{ClientMessage, ServerMessage};
+
+        let mut lobby = Lobby::new();
+        lobby.players.push(Player::new(1, "p1".into(), 200));
+        let msg = ClientMessage::Place(PlaceMessage {
+            shape: Shape::Square,
+            row: 1,
+            col: 1,
+        });
+        assert!(matches!(
+            handle_client_message(&mut lobby, 1, msg),
+            MessageOutcome::Handled
+        ));
+
+        let dup = ClientMessage::Place(PlaceMessage {
+            shape: Shape::Square,
+            row: 1,
+            col: 1,
+        });
+        let outcome = handle_client_message(&mut lobby, 1, dup);
+
+        assert!(matches!(
+            outcome,
+            MessageOutcome::Reply(ServerMessage::Error(_))
+        ));
+        assert_eq!(
+            lobby.players[0].gold, 175,
+            "second placement must not charge gold"
+        );
+    }
+
+    #[test]
+    fn handle_leave_lobby_returns_leave_outcome() {
+        use crate::model::messages::ClientMessage;
+
+        let mut lobby = Lobby::new();
+        lobby.players.push(Player::new(1, "p1".into(), 100));
+        let outcome = handle_client_message(&mut lobby, 1, ClientMessage::LeaveLobby);
+        assert!(matches!(outcome, MessageOutcome::LeaveLobby));
+    }
+
+    #[test]
+    fn handle_request_unit_info_returns_reply() {
+        use crate::model::messages::{ClientMessage, ServerMessage};
+
+        let mut lobby = Lobby::new();
+        lobby.players.push(Player::new(1, "p1".into(), 100));
+        let e = spawn_unit(
+            &mut lobby.game_state.world,
+            Position { x: 100.0, y: 100.0 },
+            Shape::Square,
+            1,
+        );
+        let outcome = handle_client_message(
+            &mut lobby,
+            1,
+            ClientMessage::RequestUnitInfo {
+                entity_id: e.to_bits(),
+            },
+        );
+        match outcome {
+            MessageOutcome::Reply(ServerMessage::UnitInfo(info)) => {
+                assert_eq!(info.entity_id, e.to_bits())
+            }
+            _ => panic!("expected UnitInfo reply"),
+        }
     }
 
     // --- Placement occupancy tests ---
