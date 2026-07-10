@@ -152,17 +152,14 @@ async fn handle_connection(
 
     loop {
         // on a new connection send the lobby status to the client.
-        let lobby_infos: Vec<LobbyInfo> = server_state
-            .lobbies
-            .lock()
-            .await
-            .iter()
-            .enumerate()
-            .map(|(id, lobby)| LobbyInfo {
+        let mut lobby_infos: Vec<LobbyInfo> = Vec::with_capacity(server_state.lobbies.len());
+        for (id, lobby_arc) in server_state.lobbies.iter().enumerate() {
+            let lobby = lobby_arc.lock().await;
+            lobby_infos.push(LobbyInfo {
                 id,
                 player_count: lobby.players.len(),
-            })
-            .collect();
+            });
+        }
 
         if send_message(&mut ws_sender, ServerMessage::LobbyStatus(lobby_infos))
             .await
@@ -276,15 +273,14 @@ async fn handle_connection(
 }
 
 pub(crate) async fn broadcast_lobby_status(state: &ServerState) {
-    let lobbies = state.lobbies.lock().await;
-    let lobby_infos: Vec<LobbyInfo> = lobbies
-        .iter()
-        .enumerate()
-        .map(|(id, lobby)| LobbyInfo {
+    let mut lobby_infos: Vec<LobbyInfo> = Vec::with_capacity(state.lobbies.len());
+    for (id, lobby_arc) in state.lobbies.iter().enumerate() {
+        let lobby = lobby_arc.lock().await;
+        lobby_infos.push(LobbyInfo {
             id,
             player_count: lobby.players.len(),
-        })
-        .collect();
+        });
+    }
     let msg = ServerMessage::LobbyStatus(lobby_infos);
     let msg_str = serde_json::to_string(&msg).unwrap();
     let _ = state.lobby_tx.send(msg_str);

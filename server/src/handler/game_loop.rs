@@ -158,10 +158,15 @@ pub async fn run_game_loop(server_state: ServerState, lobby_id: usize, generatio
     let tick_delta = 1.0 / TICK_RATE;
     let mut schedule = build_main_schedule();
 
+    let Some(lobby_arc) = server_state.lobbies.get(lobby_id).cloned() else {
+        return;
+    };
+
     loop {
         interval.tick().await;
-        let mut lobbies = server_state.lobbies.lock().await;
-        if let Some(lobby) = lobbies.get_mut(lobby_id) {
+        let mut lobby_guard = lobby_arc.lock().await;
+        let lobby = &mut *lobby_guard;
+        {
             // Exit if the lobby has been reset for a new game.
             if lobby.game_generation != generation {
                 break;
@@ -344,9 +349,6 @@ pub async fn run_game_loop(server_state: ServerState, lobby_id: usize, generatio
             }
 
             lobby.broadcast_gamestate();
-        } else {
-            // Lobby no longer exists, stop the loop.
-            break;
         }
     }
 }
