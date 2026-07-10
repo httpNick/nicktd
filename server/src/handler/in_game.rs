@@ -25,6 +25,36 @@ pub enum InGameLoopResult {
     ForceDisconnect,
 }
 
+/// Sells the entity with the given index if it is a tower owned by `player_id`.
+/// Workers and Kings are never sellable. Returns the refund amount on success.
+pub fn try_sell_entity(
+    lobby: &mut crate::model::lobby::Lobby,
+    player_id: i64,
+    entity_id: u32,
+) -> Option<u32> {
+    use bevy_ecs::prelude::Without;
+    use crate::model::components::King as KingMarker;
+
+    let mut query = lobby.game_state.world.query_filtered::<(
+        Entity,
+        &PlayerIdComponent,
+        &ShapeComponent,
+    ), (Without<Worker>, Without<KingMarker>)>();
+    let found = query
+        .iter(&lobby.game_state.world)
+        .find(|(e, owner, _)| e.index() == entity_id && owner.0 == player_id)
+        .map(|(entity, _, shape)| (entity, shape.0));
+
+    let (entity, shape) = found?;
+    let profile = crate::model::unit_config::get_unit_profile(shape);
+    let refund = (profile.gold_cost as f32 * 0.75) as u32;
+    if let Some(player) = lobby.players.iter_mut().find(|p| p.id == player_id) {
+        player.gold += refund;
+    }
+    lobby.game_state.world.despawn(entity);
+    Some(refund)
+}
+
 pub async fn in_game_loop(
     ws_sender: &mut SplitSink<UpgradedWebSocket, Message>,
     ws_receiver: &mut SplitStream<UpgradedWebSocket>,
@@ -134,19 +164,7 @@ pub async fn in_game_loop(
                                             continue;
                                         }
 
-                                        let mut query = lobby.game_state.world.query::<(Entity, &PlayerIdComponent, &ShapeComponent)>();
-                                        let found = query
-                                            .iter(&lobby.game_state.world)
-                                            .find(|(e, owner, _)| e.index() == entity_id && owner.0 == player_id)
-                                            .map(|(entity, _, shape)| (entity, shape.0));
-
-                                        if let Some((entity, shape)) = found {
-                                            let profile = crate::model::unit_config::get_unit_profile(shape);
-                                            let refund = (profile.gold_cost as f32 * 0.75) as u32;
-                                            if let Some(player) = lobby.players.iter_mut().find(|p| p.id == player_id) {
-                                                player.gold += refund;
-                                            }
-                                            lobby.game_state.world.despawn(entity);
+                                        if try_sell_entity(lobby, player_id, entity_id).is_some() {
                                             lobby.broadcast_gamestate();
                                         }
                                     }
@@ -474,6 +492,95 @@ mod tests {
     }
 
     // --- SellById tests ---
+
+    #[test]
+    fn try_sell_entity_sells_own_tower_and_refunds_gold() {
+        let mut lobby = Lobby::new();
+        let player_id: i64 = 1;
+        lobby.players.push(Player::new(player_id, "p1".into(), 100));
+
+        let entity = spawn_unit(
+            &mut lobby.game_state.world,
+            Position { x: 100.0, y: 100.0 },
+            Shape::Square,
+            player_id,
+        );
+
+        let sold = try_sell_entity(&mut lobby, player_id, entity.index());
+
+        assert_eq!(sold, Some(18), "Square costs 25, refund is 75% = 18");
+        assert_eq!(lobby.players[0].gold, 118, "Refund should be added to gold");
+        assert!(
+            !lobby.game_state.world.entities().contains(entity),
+            "Sold tower should be despawned"
+        );
+    }
+
+    #[test]
+    fn try_sell_entity_refuses_to_sell_worker() {
+        let mut lobby = Lobby::new();
+        let player_id: i64 = 1;
+        lobby.players.push(Player::new(player_id, "p1".into(), 100));
+
+        let targets = TargetPositions {
+            vein: crate::handler::worker::VEIN_POSITIONS[0],
+            cart: crate::handler::worker::CART_POSITIONS[0],
+        };
+        let worker = crate::handler::spawn::spawn_worker(
+            &mut lobby.game_state.world,
+            player_id,
+            targets,
+        );
+
+        let sold = try_sell_entity(&mut lobby, player_id, worker.index());
+
+        assert_eq!(sold, None, "Workers must not be sellable");
+        assert_eq!(lobby.players[0].gold, 100, "Gold must not change");
+        assert!(
+            lobby.game_state.world.entities().contains(worker),
+            "Worker must not be despawned"
+        );
+    }
+
+    #[test]
+    fn try_sell_entity_refuses_to_sell_king() {
+        let mut lobby = Lobby::new();
+        let player_id: i64 = 1;
+        lobby.players.push(Player::new(player_id, "p1".into(), 100));
+
+        let king = crate::handler::spawn::spawn_king(&mut lobby.game_state.world, player_id, 0);
+
+        let sold = try_sell_entity(&mut lobby, player_id, king.index());
+
+        assert_eq!(sold, None, "The king must not be sellable");
+        assert_eq!(lobby.players[0].gold, 100, "Gold must not change");
+        assert!(
+            lobby.game_state.world.entities().contains(king),
+            "King must not be despawned"
+        );
+    }
+
+    #[test]
+    fn try_sell_entity_refuses_wrong_owner() {
+        let mut lobby = Lobby::new();
+        lobby.players.push(Player::new(1, "p1".into(), 100));
+        lobby.players.push(Player::new(2, "p2".into(), 100));
+
+        let entity = spawn_unit(
+            &mut lobby.game_state.world,
+            Position { x: 100.0, y: 100.0 },
+            Shape::Square,
+            1,
+        );
+
+        let sold = try_sell_entity(&mut lobby, 2, entity.index());
+
+        assert_eq!(sold, None, "Players must not sell towers they don't own");
+        assert!(
+            lobby.game_state.world.entities().contains(entity),
+            "Tower must not be despawned"
+        );
+    }
 
     #[test]
     fn test_sell_by_id_refunds_gold_in_build_phase() {
