@@ -562,8 +562,8 @@ fn execute_combat_round(world: &mut World, tick_delta: f32) -> Vec<CombatEvent> 
             .unwrap_or(Position { x: 0.0, y: 0.0 });
 
         combat_events.push(CombatEvent {
-            attacker_id: attacker_entity.index(),
-            target_id: target_entity.index(),
+            attacker_id: attacker_entity.to_bits(),
+            target_id: target_entity.to_bits(),
             attack_type: damage_type,
             start_pos,
             end_pos,
@@ -1588,8 +1588,8 @@ mod tests {
 
         assert_eq!(events.len(), 1, "Should return 1 combat event");
         let event = &events[0];
-        assert_eq!(event.attacker_id, attacker.index());
-        assert_eq!(event.target_id, target.index());
+        assert_eq!(event.attacker_id, attacker.to_bits());
+        assert_eq!(event.target_id, target.to_bits());
         assert_eq!(event.attack_type, DamageType::PhysicalPierce);
         assert_eq!(event.start_pos, Position { x: 0.0, y: 0.0 });
         assert_eq!(event.end_pos, Position { x: 10.0, y: 0.0 });
@@ -2060,8 +2060,8 @@ mod tests {
             1,
             "process_combat should write 1 CombatEvent message"
         );
-        assert_eq!(events[0].attacker_id, attacker.index());
-        assert_eq!(events[0].target_id, target.index());
+        assert_eq!(events[0].attacker_id, attacker.to_bits());
+        assert_eq!(events[0].target_id, target.to_bits());
         assert_eq!(events[0].attack_type, DamageType::PhysicalBasic);
     }
 

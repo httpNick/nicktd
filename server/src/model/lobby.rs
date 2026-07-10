@@ -40,6 +40,23 @@ impl Lobby {
         self.players.len() >= 2
     }
 
+    /// If the previous match has ended (GameOver or Victory), resets the lobby so a
+    /// new match can start: clears the world and winner, and re-initialises the
+    /// economy of any players still seated. No-op while a game is waiting or running.
+    pub fn reset_if_finished(&mut self) {
+        use super::game_state::GamePhase;
+        if self.game_state.phase != GamePhase::GameOver
+            && self.game_state.phase != GamePhase::Victory
+        {
+            return;
+        }
+        self.game_state.reset();
+        self.winner_id = None;
+        for player in &mut self.players {
+            *player = Player::new(player.id, player.username.clone(), 100);
+        }
+    }
+
     pub fn broadcast_gamestate(&mut self) {
         let king_entities: std::collections::HashSet<Entity> = self
             .game_state
@@ -75,7 +92,7 @@ impl Lobby {
                     maybe_worker_state,
                 )| {
                     Unit {
-                        id: entity.index(),
+                        id: entity.to_bits(),
                         x: pos.x,
                         y: pos.y,
                         shape: shape.0.clone(),
@@ -115,6 +132,88 @@ mod tests {
     use crate::model::shape::Shape;
 
     #[test]
+    fn reset_if_finished_resets_game_over_lobby_for_new_match() {
+        use crate::model::game_state::GamePhase;
+        use crate::model::shape::Shape as UnitShape;
+
+        let mut lobby = Lobby::new();
+        let mut stayer = Player::new(1, "stayer".into(), 100);
+        stayer.gold = 999;
+        stayer.income = 5;
+        stayer.king_tier = 2;
+        stayer.spawning_queue.push(UnitShape::Square);
+        lobby.players.push(stayer);
+
+        // Leftover state from the finished game.
+        spawn_unit(
+            &mut lobby.game_state.world,
+            Position { x: 100.0, y: 300.0 },
+            UnitShape::Square,
+            1,
+        );
+        lobby.game_state.phase = GamePhase::GameOver;
+        lobby.game_state.wave_number = 4;
+        lobby.winner_id = Some(1);
+
+        lobby.reset_if_finished();
+
+        assert_eq!(lobby.game_state.phase, GamePhase::Build);
+        assert_eq!(lobby.game_state.wave_number, 1);
+        assert_eq!(lobby.winner_id, None, "Stale winner must be cleared");
+        assert_eq!(
+            lobby
+                .game_state
+                .world
+                .query::<&ShapeComponent>()
+                .iter(&lobby.game_state.world)
+                .count(),
+            0,
+            "Old game entities must be despawned"
+        );
+
+        let p = &lobby.players[0];
+        assert_eq!(p.gold, 100, "Player economy must be re-initialised");
+        assert_eq!(p.income, 0);
+        assert_eq!(p.king_tier, 0);
+        assert!(p.spawning_queue.is_empty());
+        assert_eq!(p.id, 1, "Identity must be preserved");
+        assert_eq!(p.username, "stayer");
+    }
+
+    #[test]
+    fn reset_if_finished_is_a_noop_for_waiting_lobby() {
+        use crate::model::game_state::GamePhase;
+
+        let mut lobby = Lobby::new();
+        let mut waiting = Player::new(1, "p1".into(), 100);
+        waiting.gold = 80; // spent some gold placing towers pre-game? keep as-is
+        lobby.players.push(waiting);
+        lobby.game_state.phase = GamePhase::Build;
+        lobby.game_state.phase_timer = 12.0;
+
+        lobby.reset_if_finished();
+
+        assert_eq!(
+            lobby.game_state.phase_timer, 12.0,
+            "A lobby still in Build must not be reset"
+        );
+        assert_eq!(lobby.players[0].gold, 80, "Player state must be untouched");
+    }
+
+    #[test]
+    fn reset_if_finished_resets_victory_lobby() {
+        use crate::model::game_state::GamePhase;
+
+        let mut lobby = Lobby::new();
+        lobby.players.push(Player::new(1, "p1".into(), 100));
+        lobby.game_state.phase = GamePhase::Victory;
+
+        lobby.reset_if_finished();
+
+        assert_eq!(lobby.game_state.phase, GamePhase::Build);
+    }
+
+    #[test]
     fn lobby_world_has_combat_event_messages_resource() {
         let lobby = Lobby::new();
         assert!(
@@ -151,7 +250,7 @@ mod tests {
             Shape::Square,
             1,
         );
-        let tower_id = tower_entity.index();
+        let tower_id = tower_entity.to_bits();
 
         // Spawn a worker starting at cart position (500.0, 50.0)
         let targets = TargetPositions {
@@ -159,7 +258,7 @@ mod tests {
             cart: Position { x: 500.0, y: 50.0 },
         };
         let worker_entity = spawn_worker(&mut lobby.game_state.world, 1, targets);
-        let worker_id = worker_entity.index();
+        let worker_id = worker_entity.to_bits();
 
         let mut rx = lobby.tx.subscribe();
         lobby.broadcast_gamestate();
@@ -176,7 +275,7 @@ mod tests {
             .expect("tower unit not found");
         assert_eq!(
             tower_unit["id"].as_u64().unwrap(),
-            tower_id as u64,
+            tower_id,
             "tower id should match entity index"
         );
         assert!(
@@ -190,7 +289,7 @@ mod tests {
             .expect("worker unit not found");
         assert_eq!(
             worker_unit["id"].as_u64().unwrap(),
-            worker_id as u64,
+            worker_id,
             "worker id should match entity index"
         );
         assert_eq!(

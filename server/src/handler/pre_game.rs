@@ -51,6 +51,9 @@ pub async fn pre_game_loop(
                                     let mut lobbies = server_state.lobbies.lock().await;
                                     if let Some(lobby) = lobbies.get_mut(lobby_id) {
                                         if lobby.players.len() < 2 {
+                                            // A finished match may still occupy this lobby
+                                            // (e.g. the winner stayed after a forfeit).
+                                            lobby.reset_if_finished();
                                             lobby.players.push(Player::new(player_id, username.clone(), 100));
                                             if lobby.players.len() == 2 {
                                                 let generation = lobby.game_generation;

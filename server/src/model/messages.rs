@@ -7,8 +7,8 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Serialize, Clone, Debug, Message)]
 pub struct CombatEvent {
-    pub attacker_id: u32,
-    pub target_id: u32,
+    pub attacker_id: u64,
+    pub target_id: u64,
     pub attack_type: DamageType,
     pub start_pos: Position,
     pub end_pos: Position,
@@ -26,11 +26,11 @@ pub struct PlaceMessage {
 pub enum ClientMessage {
     JoinLobby(usize),
     Place(PlaceMessage),
-    SellById { entity_id: u32 },
+    SellById { entity_id: u64 },
     SkipToCombat,
     LeaveLobby,
     HireWorker {},
-    RequestUnitInfo { entity_id: u32 },
+    RequestUnitInfo { entity_id: u64 },
     SendUnit { shape: Shape },
     UpgradeKing {},
 }
@@ -43,7 +43,8 @@ pub struct LobbyInfo {
 
 #[derive(Serialize, Clone, Debug)]
 pub struct Unit {
-    pub id: u32,
+    /// Full entity bits (index + generation) so stale IDs never match recycled entities.
+    pub id: u64,
     pub shape: Shape,
     pub x: f32,
     pub y: f32,
@@ -60,7 +61,7 @@ pub struct Unit {
 
 #[derive(Serialize, Clone, Debug)]
 pub struct UnitInfoData {
-    pub entity_id: u32,
+    pub entity_id: u64,
     pub attack_damage: Option<f32>,
     pub attack_rate: Option<f32>,
     pub attack_range: Option<f32>,

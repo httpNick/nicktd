@@ -25,12 +25,24 @@ pub enum InGameLoopResult {
     ForceDisconnect,
 }
 
+/// Returns true if a placed entity already claims the grid cell centred at (x, y).
+/// Towers anchor to their cell via `HomePosition`; workers and kings have no
+/// `HomePosition` and never block placement.
+pub fn is_cell_occupied(world: &mut bevy_ecs::prelude::World, x: f32, y: f32) -> bool {
+    use crate::model::components::HomePosition;
+    let half_cell = SQUARE_SIZE / 2.0;
+    let mut query = world.query::<&HomePosition>();
+    query
+        .iter(world)
+        .any(|home| (home.0.x - x).abs() < half_cell && (home.0.y - y).abs() < half_cell)
+}
+
 /// Sells the entity with the given index if it is a tower owned by `player_id`.
 /// Workers and Kings are never sellable. Returns the refund amount on success.
 pub fn try_sell_entity(
     lobby: &mut crate::model::lobby::Lobby,
     player_id: i64,
-    entity_id: u32,
+    entity_id: u64,
 ) -> Option<u32> {
     use bevy_ecs::prelude::Without;
     use crate::model::components::King as KingMarker;
@@ -42,7 +54,7 @@ pub fn try_sell_entity(
     ), (Without<Worker>, Without<KingMarker>)>();
     let found = query
         .iter(&lobby.game_state.world)
-        .find(|(e, owner, _)| e.index() == entity_id && owner.0 == player_id)
+        .find(|(e, owner, _)| e.to_bits() == entity_id && owner.0 == player_id)
         .map(|(entity, _, shape)| (entity, shape.0));
 
     let (entity, shape) = found?;
@@ -102,6 +114,11 @@ pub async fn in_game_loop(
                                                 crate::model::constants::RIGHT_BOARD_START + (p.col as f32 * SQUARE_SIZE) + (SQUARE_SIZE / 2.0)
                                             };
                                             let y = (p.row as f32 * SQUARE_SIZE) + (SQUARE_SIZE / 2.0);
+
+                                            if is_cell_occupied(&mut lobby.game_state.world, x, y) {
+                                                let _ = crate::routes::ws::send_message(ws_sender, crate::model::messages::ServerMessage::Error("That square is already occupied.".into())).await;
+                                                continue;
+                                            }
 
                                             if lobby.players[idx].try_spend_gold(profile.gold_cost) {
                                                 crate::handler::spawn::spawn_unit(
@@ -181,7 +198,7 @@ pub async fn in_game_loop(
                                         )>();
                                         let found = query
                                             .iter(&lobby.game_state.world)
-                                            .find(|(entity, ..)| entity.index() == entity_id)
+                                            .find(|(entity, ..)| entity.to_bits() == entity_id)
                                             .map(|(_, attack_stats, attack_range, defense_stats, shape_comp, boss, owner, worker)| (
                                                 attack_stats.map(|s| s.damage),
                                                 attack_stats.map(|s| s.rate),
@@ -491,7 +508,133 @@ mod tests {
         );
     }
 
+    // --- Placement occupancy tests ---
+
+    #[test]
+    fn is_cell_occupied_detects_existing_tower() {
+        let mut lobby = Lobby::new();
+        let x = (2.0 * SQUARE_SIZE) + (SQUARE_SIZE / 2.0);
+        let y = (3.0 * SQUARE_SIZE) + (SQUARE_SIZE / 2.0);
+
+        spawn_unit(
+            &mut lobby.game_state.world,
+            Position { x, y },
+            Shape::Square,
+            1,
+        );
+
+        assert!(
+            is_cell_occupied(&mut lobby.game_state.world, x, y),
+            "Cell with a tower must be occupied"
+        );
+    }
+
+    #[test]
+    fn is_cell_occupied_false_for_empty_and_adjacent_cells() {
+        let mut lobby = Lobby::new();
+        let x = (2.0 * SQUARE_SIZE) + (SQUARE_SIZE / 2.0);
+        let y = (3.0 * SQUARE_SIZE) + (SQUARE_SIZE / 2.0);
+
+        assert!(
+            !is_cell_occupied(&mut lobby.game_state.world, x, y),
+            "Empty world has no occupied cells"
+        );
+
+        spawn_unit(
+            &mut lobby.game_state.world,
+            Position { x, y },
+            Shape::Square,
+            1,
+        );
+
+        assert!(
+            !is_cell_occupied(&mut lobby.game_state.world, x + SQUARE_SIZE, y),
+            "Adjacent column must not read as occupied"
+        );
+        assert!(
+            !is_cell_occupied(&mut lobby.game_state.world, x, y + SQUARE_SIZE),
+            "Adjacent row must not read as occupied"
+        );
+    }
+
+    #[test]
+    fn is_cell_occupied_ignores_workers() {
+        let mut lobby = Lobby::new();
+
+        // Worker positions are outside the board, but guard the logic anyway:
+        // workers have no HomePosition, so wherever they stand must not block placement.
+        let targets = TargetPositions {
+            vein: crate::handler::worker::VEIN_POSITIONS[0],
+            cart: crate::handler::worker::CART_POSITIONS[0],
+        };
+        crate::handler::spawn::spawn_worker(&mut lobby.game_state.world, 1, targets);
+
+        let cart = crate::handler::worker::CART_POSITIONS[0];
+        assert!(
+            !is_cell_occupied(&mut lobby.game_state.world, cart.x, cart.y),
+            "A worker standing on a spot must not block tower placement"
+        );
+    }
+
     // --- SellById tests ---
+
+    #[test]
+    fn try_sell_entity_stale_id_does_not_sell_recycled_entity() {
+        let mut lobby = Lobby::new();
+        let player_id: i64 = 1;
+        lobby.players.push(Player::new(player_id, "p1".into(), 100));
+
+        // Tower A exists, client learns its ID, then A is despawned.
+        let tower_a = spawn_unit(
+            &mut lobby.game_state.world,
+            Position { x: 100.0, y: 100.0 },
+            Shape::Square,
+            player_id,
+        );
+        let stale_id = tower_a.to_bits();
+        lobby.game_state.world.despawn(tower_a);
+
+        // Tower B spawns and may reuse A's index (with a new generation).
+        let tower_b = spawn_unit(
+            &mut lobby.game_state.world,
+            Position { x: 200.0, y: 100.0 },
+            Shape::Circle,
+            player_id,
+        );
+
+        // The client's stale request must not sell tower B.
+        let sold = try_sell_entity(&mut lobby, player_id, stale_id);
+
+        assert_eq!(sold, None, "A stale entity ID must not sell anything");
+        assert!(
+            lobby.game_state.world.entities().contains(tower_b),
+            "The new tower must not be despawned by a stale ID"
+        );
+        assert_eq!(lobby.players[0].gold, 100, "No refund for a stale ID");
+    }
+
+    #[test]
+    fn broadcast_unit_ids_are_full_entity_bits() {
+        let mut lobby = Lobby::new();
+        let tower = spawn_unit(
+            &mut lobby.game_state.world,
+            Position { x: 100.0, y: 300.0 },
+            Shape::Square,
+            1,
+        );
+
+        let mut rx = lobby.tx.subscribe();
+        lobby.broadcast_gamestate();
+
+        let msg = rx.try_recv().unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&msg).unwrap();
+        let units = parsed["data"]["units"].as_array().unwrap();
+        assert_eq!(
+            units[0]["id"].as_u64().unwrap(),
+            tower.to_bits(),
+            "Broadcast unit id must be the full entity bits (index + generation)"
+        );
+    }
 
     #[test]
     fn try_sell_entity_sells_own_tower_and_refunds_gold() {
@@ -506,7 +649,7 @@ mod tests {
             player_id,
         );
 
-        let sold = try_sell_entity(&mut lobby, player_id, entity.index());
+        let sold = try_sell_entity(&mut lobby, player_id, entity.to_bits());
 
         assert_eq!(sold, Some(18), "Square costs 25, refund is 75% = 18");
         assert_eq!(lobby.players[0].gold, 118, "Refund should be added to gold");
@@ -532,7 +675,7 @@ mod tests {
             targets,
         );
 
-        let sold = try_sell_entity(&mut lobby, player_id, worker.index());
+        let sold = try_sell_entity(&mut lobby, player_id, worker.to_bits());
 
         assert_eq!(sold, None, "Workers must not be sellable");
         assert_eq!(lobby.players[0].gold, 100, "Gold must not change");
@@ -550,7 +693,7 @@ mod tests {
 
         let king = crate::handler::spawn::spawn_king(&mut lobby.game_state.world, player_id, 0);
 
-        let sold = try_sell_entity(&mut lobby, player_id, king.index());
+        let sold = try_sell_entity(&mut lobby, player_id, king.to_bits());
 
         assert_eq!(sold, None, "The king must not be sellable");
         assert_eq!(lobby.players[0].gold, 100, "Gold must not change");
@@ -573,7 +716,7 @@ mod tests {
             1,
         );
 
-        let sold = try_sell_entity(&mut lobby, 2, entity.index());
+        let sold = try_sell_entity(&mut lobby, 2, entity.to_bits());
 
         assert_eq!(sold, None, "Players must not sell towers they don't own");
         assert!(
