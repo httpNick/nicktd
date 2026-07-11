@@ -7,7 +7,7 @@ use crate::model::shape::Shape;
 #[derive(Resource, Clone, Debug, Default)]
 pub struct Players(pub Vec<Player>);
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, PartialEq)]
 pub struct Player {
     pub id: i64,
     pub username: String,

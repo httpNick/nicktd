@@ -348,7 +348,7 @@ pub async fn run_game_loop(server_state: ServerState, lobby_id: usize, generatio
                 }
             }
 
-            lobby.broadcast_gamestate();
+            lobby.broadcast_changes();
         }
     }
 }

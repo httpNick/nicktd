@@ -48,6 +48,7 @@ pub async fn remove_player_from_lobby(lobby_id: usize, player_id: i64, server_st
                 lobby.game_state.reset();
                 lobby.winner_id = None;
                 lobby.game_generation += 1;
+                lobby.reset_broadcast_cache();
             }
         }
     }

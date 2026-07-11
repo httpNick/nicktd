@@ -81,7 +81,7 @@ pub enum MessageOutcome {
 }
 
 /// Applies a client message to the lobby. Synchronous on purpose: it runs under
-/// the lobby lock and must never await. Broadcasts (`lobby.broadcast_gamestate`)
+/// the lobby lock and must never await. Broadcasts (`lobby.broadcast_changes`)
 /// are channel sends, not awaits, so they are safe here.
 pub fn handle_client_message(
     lobby: &mut crate::model::lobby::Lobby,
@@ -131,7 +131,7 @@ pub fn handle_client_message(
                     p.shape,
                     player_id,
                 );
-                lobby.broadcast_gamestate();
+                lobby.broadcast_changes();
                 MessageOutcome::Handled
             } else {
                 MessageOutcome::Reply(ServerMessage::Error(format!(
@@ -155,7 +155,7 @@ pub fn handle_client_message(
                     cart: crate::handler::worker::CART_POSITIONS[idx],
                 };
                 crate::handler::spawn::spawn_worker(&mut lobby.game_state.world, player_id, targets);
-                lobby.broadcast_gamestate();
+                lobby.broadcast_changes();
                 MessageOutcome::Handled
             } else {
                 MessageOutcome::Reply(ServerMessage::Error(
@@ -172,7 +172,7 @@ pub fn handle_client_message(
             if lobby.players[idx].try_spend_gold(sent_profile.send_cost) {
                 lobby.players[idx].spawning_queue.push(shape);
                 lobby.players[idx].income += sent_profile.income;
-                lobby.broadcast_gamestate();
+                lobby.broadcast_changes();
                 MessageOutcome::Handled
             } else {
                 MessageOutcome::Reply(ServerMessage::Error(format!(
@@ -189,7 +189,7 @@ pub fn handle_client_message(
                 ));
             }
             if try_sell_entity(lobby, player_id, entity_id).is_some() {
-                lobby.broadcast_gamestate();
+                lobby.broadcast_changes();
             }
             MessageOutcome::Handled
         }
@@ -302,7 +302,7 @@ pub fn handle_client_message(
                 if let Some(mut stats) = lobby.game_state.world.get_mut::<AttackStats>(king_e) {
                     stats.damage = new_damage;
                 }
-                lobby.broadcast_gamestate();
+                lobby.broadcast_changes();
                 MessageOutcome::Handled
             } else {
                 MessageOutcome::Reply(ServerMessage::Error("King not found.".into()))
