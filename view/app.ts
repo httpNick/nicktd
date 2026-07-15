@@ -40,7 +40,8 @@ type ClientMessagePayload =
     | { action: 'hireWorker'; payload: Record<string, never> }
     | { action: 'requestUnitInfo'; payload: { entity_id: number } }
     | { action: 'sendUnit'; payload: { shape: string } }
-    | { action: 'upgradeKing'; payload: Record<string, never> };
+    | { action: 'upgradeKing'; payload: Record<string, never> }
+    | { action: 'requestFullState' };
 
 interface Player {
     id: number;
@@ -57,6 +58,22 @@ interface GameState {
     phase: string;
     phase_timer: number;
     winner_id: number | null;
+    seq: number;
+}
+
+interface PhaseInfo {
+    phase: string;
+    phase_timer: number;
+    winner_id: number | null;
+}
+
+interface GameStateDelta {
+    seq: number;
+    added: Unit[];
+    updated: Unit[];
+    removed: number[];
+    players: Player[] | null;
+    phase_info: PhaseInfo | null;
 }
 
 interface CombatEvent {
@@ -70,6 +87,7 @@ interface CombatEvent {
 type ServerMessage =
     | { type: 'LobbyStatus'; data: any[] }
     | { type: 'GameState'; data: GameState }
+    | { type: 'GameStateDelta'; data: GameStateDelta }
     | { type: 'CombatEvents'; data: CombatEvent[] }
     | { type: 'PlayerId'; data: number }
     | { type: 'Error'; data: string }
@@ -125,7 +143,8 @@ const MERC_BUILDING_Y = [150, 450] as const;
 const MERC_BUILDING_HALF = 18;
 
 let selectedShape: 'Square' | 'Circle' | 'Triangle' = 'Square';
-let gameState: Unit[] = [];
+let unitMap = new Map<number, Unit>();
+let lastSeq = -1;
 let currentPlayers: Player[] = [];
 let myPlayerId: number | null = null;
 let socket: WebSocket | null = null;
@@ -264,7 +283,11 @@ function connectAndShowLobby() {
             case 'GameState':
                 if (!isInGame) return;
                 if (gameView.style.display === 'none') showGameView();
-                updateGameState(serverMsg.data);
+                applyFullState(serverMsg.data);
+                break;
+            case 'GameStateDelta':
+                if (!isInGame) return;
+                applyDelta(serverMsg.data);
                 break;
             case 'CombatEvents':
                 if (!isInGame) return;
@@ -516,48 +539,54 @@ function applyPanelBoardSide(): void {
     uiPanel.style.marginLeft = idx === 0 ? '0px' : '700px';
 }
 
-function updateGameState(newState: GameState) {
-    gameState = newState.units;
-    if (newState.players) {
-        currentPlayers = newState.players;
-        const me = newState.players.find(p => p.id === myPlayerId);
-        if (me) {
-            goldDisplay.textContent = me.income > 0
-                ? `${me.gold} (+${me.income}/round)`
-                : me.gold.toString();
-            mercPanel.updateGold(me.gold);
-        }
+function currentUnits(): Unit[] {
+    return Array.from(unitMap.values());
+}
 
-        // Update king HP display
-        const myKing = newState.units.find(u => u.is_king && u.owner_id === myPlayerId);
-        if (myKing) {
-            livesDisplay.textContent = `${myKing.current_hp}/${myKing.max_hp}`;
-        } else {
-            livesDisplay.textContent = '--';
-        }
-
-        // Update king upgrade panel
-        if (me && myKing) {
-            kingUpgradePanel.update(
-                { currentTier: me.king_tier, currentHp: myKing.current_hp, maxHp: myKing.max_hp },
-                me.gold,
-                newState.phase
-            );
-        }
-
-        applyPanelBoardSide();
+// Refreshes displays derived from currentPlayers + unitMap (gold, king HP,
+// king upgrade panel, panel board side). Cheap enough to call unconditionally
+// after any full state or delta application.
+function refreshDerivedDisplays() {
+    const me = currentPlayers.find(p => p.id === myPlayerId);
+    if (me) {
+        goldDisplay.textContent = me.income > 0
+            ? `${me.gold} (+${me.income}/round)`
+            : me.gold.toString();
+        mercPanel.updateGold(me.gold);
     }
-    gamePhase = newState.phase;
-    gameTimer = Math.max(0, newState.phase_timer);
+
+    // Update king HP display
+    const myKing = currentUnits().find(u => u.is_king && u.owner_id === myPlayerId);
+    if (myKing) {
+        livesDisplay.textContent = `${myKing.current_hp}/${myKing.max_hp}`;
+    } else {
+        livesDisplay.textContent = '--';
+    }
+
+    // Update king upgrade panel
+    if (me && myKing) {
+        kingUpgradePanel.update(
+            { currentTier: me.king_tier, currentHp: myKing.current_hp, maxHp: myKing.max_hp },
+            me.gold,
+            gamePhase
+        );
+    }
+
+    applyPanelBoardSide();
+}
+
+function setPhaseText(phase: string, timer: number) {
+    gamePhase = phase;
+    gameTimer = Math.max(0, timer);
 
     gamePhaseEl.textContent = gamePhase;
     gameTimerEl.textContent = gameTimer.toFixed(1);
+}
 
-    panel.syncDynamicState(gameState, gamePhase);
-
-    if (newState.phase === 'GameOver') {
-        const isLoser = newState.winner_id !== null && newState.winner_id !== myPlayerId;
-        const isDraw = newState.winner_id === null;
+function updateGameOverOverlay(winnerId: number | null) {
+    if (gamePhase === 'GameOver') {
+        const isLoser = winnerId !== null && winnerId !== myPlayerId;
+        const isDraw = winnerId === null;
 
         if (isDraw) {
             gameResultTitle.textContent = 'Draw!';
@@ -576,7 +605,7 @@ function updateGameState(newState: GameState) {
         mercPanel.hide();
         kingUpgradePanel.hide();
         selectedShape = 'Square';
-    } else if (newState.phase === 'Victory') {
+    } else if (gamePhase === 'Victory') {
         gameResultTitle.textContent = 'Victory!';
         gameResultTitle.className = 'victory';
         gameResultSubtitle.textContent = 'All waves defeated!';
@@ -586,6 +615,52 @@ function updateGameState(newState: GameState) {
         selectedShape = 'Square';
     } else {
         gameOverOverlay.style.display = 'none';
+    }
+}
+
+function applyFullState(newState: GameState) {
+    unitMap = new Map(newState.units.map(u => [u.id, u]));
+    lastSeq = newState.seq;
+    currentPlayers = newState.players;
+
+    // Phase must be set before refreshDerivedDisplays: the king upgrade panel
+    // gates on the module-level gamePhase.
+    setPhaseText(newState.phase, newState.phase_timer);
+    refreshDerivedDisplays();
+    panel.syncDynamicState(currentUnits(), gamePhase);
+    updateGameOverOverlay(newState.winner_id);
+}
+
+function applyDelta(d: GameStateDelta) {
+    if (d.seq <= lastSeq) return; // stale delta (pre-snapshot): drop
+
+    if (d.seq !== lastSeq + 1) {
+        // Gap: a delta was missed. Ask for a direct resync and keep rendering
+        // the old state until the full snapshot arrives.
+        if (socket && socket.readyState === WebSocket.OPEN) {
+            socket.send(JSON.stringify({ action: 'requestFullState' }));
+        }
+        return;
+    }
+
+    lastSeq = d.seq;
+    for (const u of d.added) unitMap.set(u.id, u);
+    for (const u of d.updated) unitMap.set(u.id, u);
+    for (const id of d.removed) unitMap.delete(id);
+    if (d.players) currentPlayers = d.players;
+
+    // Phase must be set before refreshDerivedDisplays: the king upgrade panel
+    // gates on the module-level gamePhase. updateGameOverOverlay must run AFTER
+    // refreshDerivedDisplays (matching applyFullState's order): refreshDerivedDisplays
+    // -> kingUpgradePanel.update() unconditionally shows the panel, which would
+    // re-show it right after the overlay hid it if called in the other order.
+    if (d.phase_info) {
+        setPhaseText(d.phase_info.phase, d.phase_info.phase_timer);
+    }
+    refreshDerivedDisplays();
+    panel.syncDynamicState(currentUnits(), gamePhase);
+    if (d.phase_info) {
+        updateGameOverOverlay(d.phase_info.winner_id);
     }
 }
 
@@ -652,7 +727,7 @@ function render() {
         drawKingZone();
         drawCheckerboard();
         drawWorkerArea();
-        drawUnits(gameState);
+        drawUnits(currentUnits());
         drawMercenaryBuildings();
         drawSpawningGrounds();
 
@@ -714,7 +789,7 @@ canvas.addEventListener('click', function (event) {
     }
 
     const unitHitSize = SQUARE_SIZE - 20;
-    const clickedUnit = gameState.find(s => {
+    const clickedUnit = currentUnits().find(s => {
         return clickX >= s.x - unitHitSize / 2 && clickX <= s.x + unitHitSize / 2 &&
             clickY >= s.y - unitHitSize / 2 && clickY <= s.y + unitHitSize / 2;
     });

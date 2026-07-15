@@ -141,9 +141,12 @@ impl Lobby {
             .collect()
     }
 
-    /// Sends the full game state and rebuilds the delta cache from it, so the next
-    /// `broadcast_changes` call diffs against exactly what was just sent.
-    pub fn broadcast_gamestate(&mut self) {
+    /// Builds a full-state snapshot, bumps `seq`, and rebaselines the delta cache
+    /// from it, so the next `broadcast_changes` call diffs against exactly what was
+    /// just built. Used only by `broadcast_gamestate` (which sends it to everyone);
+    /// single-client direct replies go through `full_state_message`, which must NOT
+    /// bump `seq` or touch the cache.
+    fn build_full_state(&mut self) -> SerializableGameState {
         let units = self.snapshot_units();
 
         self.seq += 1;
@@ -155,10 +158,6 @@ impl Lobby {
             winner_id: self.winner_id,
             seq: self.seq,
         };
-
-        let msg = ServerMessage::GameState(serializable_state);
-        let msg_str = serde_json::to_string(&msg).unwrap();
-        let _ = self.tx.send(msg_str);
 
         self.broadcast_cache = units
             .into_iter()
@@ -173,6 +172,38 @@ impl Lobby {
             phase_timer: self.game_state.phase_timer.floor(),
             winner_id: self.winner_id,
         });
+
+        serializable_state
+    }
+
+    /// Sends the full game state to every subscriber and rebuilds the delta cache
+    /// from it, so the next `broadcast_changes` call diffs against exactly what was
+    /// just sent.
+    pub fn broadcast_gamestate(&mut self) {
+        let serializable_state = self.build_full_state();
+        let msg = ServerMessage::GameState(serializable_state);
+        let msg_str = serde_json::to_string(&msg).unwrap();
+        let _ = self.tx.send(msg_str);
+    }
+
+    /// Full-state message for ONE client, e.g. lag recovery or a direct
+    /// `RequestFullState`. Stamped with the CURRENT `seq` — unlike
+    /// `build_full_state`, this does NOT bump `seq` or rebaseline the shared delta
+    /// cache/last_players/last_phase_info, because doing so while sending to only
+    /// one client would create a permanent seq gap for every other subscriber (who
+    /// then resyncs too, bumping seq again, gapping the first client, forever).
+    /// The resyncing client sets `lastSeq = seq`; the next broadcast delta is
+    /// `seq + 1` and applies contiguously for every client.
+    pub fn full_state_message(&mut self) -> ServerMessage {
+        let units = self.snapshot_units();
+        ServerMessage::GameState(SerializableGameState {
+            units,
+            players: self.players.clone(),
+            phase: self.game_state.phase,
+            phase_timer: self.game_state.phase_timer,
+            winner_id: self.winner_id,
+            seq: self.seq,
+        })
     }
 
     /// Sends only what changed since the last broadcast (snapshot or delta): added,
@@ -624,6 +655,60 @@ mod tests {
         lobby.broadcast_changes();
         let v: serde_json::Value = serde_json::from_str(&rx.try_recv().unwrap()).unwrap();
         assert!(v["data"]["phase_info"].is_object());
+    }
+
+    #[test]
+    fn full_state_message_does_not_consume_a_seq_slot() {
+        let mut lobby = Lobby::new();
+        lobby.players.push(Player::new(1, "p1".into(), 100));
+        let e = spawn_unit(
+            &mut lobby.game_state.world,
+            Position { x: 100.0, y: 300.0 },
+            Shape::Square,
+            1,
+        );
+
+        // Two subscribers standing in for the two clients in the lobby.
+        let mut rx_a = lobby.tx.subscribe();
+        let mut rx_b = lobby.tx.subscribe();
+
+        // Baseline snapshot both clients receive normally.
+        lobby.broadcast_gamestate();
+        let baseline: serde_json::Value =
+            serde_json::from_str(&rx_a.try_recv().unwrap()).unwrap();
+        let _ = rx_b.try_recv().unwrap();
+        let baseline_seq = baseline["data"]["seq"].as_u64().unwrap();
+
+        // Simulate a direct resync reply to client A only (not broadcast).
+        let direct_msg = lobby.full_state_message();
+        let direct_json = serde_json::to_value(&direct_msg).unwrap();
+        assert_eq!(
+            direct_json["data"]["seq"].as_u64().unwrap(),
+            baseline_seq,
+            "direct snapshot must be stamped with the current seq, not a bumped one"
+        );
+
+        // Neither client should have received anything on the broadcast channel
+        // from the direct snapshot call.
+        assert!(rx_a.try_recv().is_err());
+        assert!(rx_b.try_recv().is_err());
+
+        // Now mutate a unit and broadcast a delta as the game loop normally would.
+        lobby.game_state.world.get_mut::<Position>(e).unwrap().x = 150.0;
+        lobby.broadcast_changes();
+
+        let delta_a: serde_json::Value = serde_json::from_str(&rx_a.try_recv().unwrap()).unwrap();
+        let delta_b: serde_json::Value = serde_json::from_str(&rx_b.try_recv().unwrap()).unwrap();
+        assert_eq!(
+            delta_a["data"]["seq"].as_u64().unwrap(),
+            baseline_seq + 1,
+            "the direct snapshot must not have consumed a seq slot"
+        );
+        assert_eq!(
+            delta_b["data"]["seq"].as_u64().unwrap(),
+            baseline_seq + 1,
+            "both subscribers must see the same contiguous seq"
+        );
     }
 
     #[test]

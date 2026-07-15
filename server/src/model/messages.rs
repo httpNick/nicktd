@@ -33,6 +33,8 @@ pub enum ClientMessage {
     RequestUnitInfo { entity_id: u64 },
     SendUnit { shape: Shape },
     UpgradeKing {},
+    /// Client detected a seq gap (missed a delta) and asks for a direct resync.
+    RequestFullState,
 }
 
 #[derive(Serialize, Clone, Debug)]
@@ -161,6 +163,16 @@ mod tests {
         let msg: ClientMessage = serde_json::from_str(json).unwrap();
         match msg {
             ClientMessage::HireWorker {} => assert!(true),
+            _ => panic!("Wrong message type"),
+        }
+    }
+
+    #[test]
+    fn deserialize_request_full_state() {
+        let json = r#"{"action":"requestFullState"}"#;
+        let msg: ClientMessage = serde_json::from_str(json).unwrap();
+        match msg {
+            ClientMessage::RequestFullState => assert!(true),
             _ => panic!("Wrong message type"),
         }
     }

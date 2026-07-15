@@ -308,6 +308,7 @@ pub fn handle_client_message(
                 MessageOutcome::Reply(ServerMessage::Error("King not found.".into()))
             }
         }
+        ClientMessage::RequestFullState => MessageOutcome::Reply(lobby.full_state_message()),
         _ => MessageOutcome::Ignored,
     }
 }
@@ -353,8 +354,27 @@ pub async fn in_game_loop(
                     Some(Err(_)) | None => break InGameLoopResult::ClientDisconnected,
                 }
             },
-            Ok(msg) = game_rx.recv() => {
-                if ws_sender.send(Message::Text(msg.into())).await.is_err() { break InGameLoopResult::ClientDisconnected; }
+            result = game_rx.recv() => {
+                match result {
+                    Ok(msg) => {
+                        if ws_sender.send(Message::Text(msg.into())).await.is_err() {
+                            break InGameLoopResult::ClientDisconnected;
+                        }
+                    }
+                    Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {
+                        // Missed deltas: rebaseline this client with a direct snapshot.
+                        let snapshot = {
+                            let mut lobby = server_state.lobbies[lobby_id].lock().await;
+                            lobby.full_state_message() // -> ServerMessage::GameState
+                        };
+                        if crate::routes::ws::send_message(ws_sender, snapshot).await.is_err() {
+                            break InGameLoopResult::ClientDisconnected;
+                        }
+                    }
+                    Err(tokio::sync::broadcast::error::RecvError::Closed) => {
+                        break InGameLoopResult::ClientDisconnected;
+                    }
+                }
             }
         }
     }
@@ -1411,6 +1431,47 @@ mod tests {
         assert!(
             !can_afford,
             "Player with insufficient gold should not be able to upgrade"
+        );
+    }
+
+    #[test]
+    fn handle_request_full_state_returns_snapshot_reply() {
+        use crate::model::messages::ServerMessage;
+        let mut lobby = Lobby::new();
+        lobby.players.push(Player::new(1, "p1".into(), 100));
+        spawn_unit(
+            &mut lobby.game_state.world,
+            Position { x: 100.0, y: 300.0 },
+            Shape::Square,
+            1,
+        );
+        // Establish a nonzero seq (as a real lobby would have after ticking) so the
+        // assertions below actually pin the value rather than trivially matching 0.
+        lobby.broadcast_gamestate();
+        let seq_before = lobby.seq;
+
+        let outcome = handle_client_message(&mut lobby, 1, ClientMessage::RequestFullState);
+
+        match outcome {
+            MessageOutcome::Reply(ServerMessage::GameState(state)) => {
+                assert_eq!(state.units.len(), 1);
+                assert_eq!(
+                    state.seq, seq_before,
+                    "direct snapshot must be stamped with the lobby's current seq"
+                );
+                assert_eq!(
+                    state.players.len(),
+                    1,
+                    "players must be populated in the direct snapshot"
+                );
+                assert_eq!(state.phase, lobby.game_state.phase);
+            }
+            _ => panic!("expected GameState reply"),
+        }
+
+        assert_eq!(
+            lobby.seq, seq_before,
+            "handling RequestFullState must not bump the shared lobby seq"
         );
     }
 }
