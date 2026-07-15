@@ -33,6 +33,8 @@ pub enum ClientMessage {
     RequestUnitInfo { entity_id: u64 },
     SendUnit { shape: Shape },
     UpgradeKing {},
+    /// Client detected a seq gap (missed a delta) and asks for a direct resync.
+    RequestFullState,
 }
 
 #[derive(Serialize, Clone, Debug)]
@@ -41,7 +43,7 @@ pub struct LobbyInfo {
     pub player_count: usize,
 }
 
-#[derive(Serialize, Clone, Debug)]
+#[derive(Serialize, Clone, Debug, PartialEq)]
 pub struct Unit {
     /// Full entity bits (index + generation) so stale IDs never match recycled entities.
     pub id: u64,
@@ -78,6 +80,30 @@ pub struct SerializableGameState {
     pub phase: GamePhase,
     pub phase_timer: f32,
     pub winner_id: Option<i64>,
+    pub seq: u64,
+}
+
+/// Snapshot of the fields a client needs to detect a phase/timer/winner change.
+/// `phase_timer` is stored floored to the whole second so sub-second ticks don't
+/// spuriously mark this "changed" (see the diff rule in `Lobby::broadcast_changes`).
+#[derive(Serialize, Clone, Debug, PartialEq)]
+pub struct PhaseInfo {
+    pub phase: GamePhase,
+    pub phase_timer: f32,
+    pub winner_id: Option<i64>,
+}
+
+/// Delta-compressed game state broadcast: only units that were added, changed, or
+/// removed since the last broadcast (snapshot or delta). `players`/`phase_info` are
+/// only populated when they actually changed.
+#[derive(Serialize, Clone, Debug)]
+pub struct GameStateDelta {
+    pub seq: u64,
+    pub added: Vec<Unit>,
+    pub updated: Vec<Unit>,
+    pub removed: Vec<u64>,
+    pub players: Option<Vec<Player>>,
+    pub phase_info: Option<PhaseInfo>,
 }
 
 #[derive(Serialize, Clone, Debug)]
@@ -85,6 +111,7 @@ pub struct SerializableGameState {
 pub enum ServerMessage {
     LobbyStatus(Vec<LobbyInfo>),
     GameState(SerializableGameState),
+    GameStateDelta(GameStateDelta),
     CombatEvents(Vec<CombatEvent>),
     PlayerId(i64),
     Error(String),
@@ -114,6 +141,7 @@ mod tests {
             phase: GamePhase::Build,
             phase_timer: 0.0,
             winner_id: Some(42),
+            seq: 1,
         };
         let json = serde_json::to_string(&state).unwrap();
         assert!(json.contains("\"winner_id\":42"));
@@ -135,6 +163,16 @@ mod tests {
         let msg: ClientMessage = serde_json::from_str(json).unwrap();
         match msg {
             ClientMessage::HireWorker {} => assert!(true),
+            _ => panic!("Wrong message type"),
+        }
+    }
+
+    #[test]
+    fn deserialize_request_full_state() {
+        let json = r#"{"action":"requestFullState"}"#;
+        let msg: ClientMessage = serde_json::from_str(json).unwrap();
+        match msg {
+            ClientMessage::RequestFullState => assert!(true),
             _ => panic!("Wrong message type"),
         }
     }
