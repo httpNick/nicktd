@@ -76,7 +76,7 @@ pub enum MessageOutcome {
     Handled,
     /// The player asked to leave the lobby.
     LeaveLobby,
-    /// Message not applicable in-game (e.g. JoinLobby).
+    /// Message not applicable in-game (e.g. JoinQueue).
     Ignored,
 }
 
@@ -317,15 +317,16 @@ pub async fn in_game_loop(
     ws_sender: &mut SplitSink<UpgradedWebSocket, Message>,
     ws_receiver: &mut SplitStream<UpgradedWebSocket>,
     server_state: &ServerState,
-    lobby_id: usize,
+    match_id: u64,
     player_id: i64,
     shutdown_rx: &mut mpsc::Receiver<()>,
 ) -> InGameLoopResult {
-    let mut game_rx = server_state.lobbies[lobby_id].lock().await.tx.subscribe();
-    server_state.lobbies[lobby_id]
-        .lock()
-        .await
-        .broadcast_gamestate();
+    let Some(lobby_arc) = server_state.matches.read().await.get(&match_id).cloned() else {
+        // Match already torn down (e.g. opponent left and cleanup raced us).
+        return InGameLoopResult::PlayerLeft;
+    };
+    let mut game_rx = lobby_arc.lock().await.tx.subscribe();
+    lobby_arc.lock().await.broadcast_gamestate();
 
     loop {
         tokio::select! {
@@ -338,7 +339,7 @@ pub async fn in_game_loop(
                         if let Message::Text(text) = msg {
                             if let Ok(client_msg) = serde_json::from_str::<ClientMessage>(&text) {
                                 let outcome = {
-                                    let mut lobby = server_state.lobbies[lobby_id].lock().await;
+                                    let mut lobby = lobby_arc.lock().await;
                                     handle_client_message(&mut lobby, player_id, client_msg)
                                 }; // lobby guard dropped here, before any network await
                                 match outcome {
@@ -364,7 +365,7 @@ pub async fn in_game_loop(
                     Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {
                         // Missed deltas: rebaseline this client with a direct snapshot.
                         let snapshot = {
-                            let mut lobby = server_state.lobbies[lobby_id].lock().await;
+                            let mut lobby = lobby_arc.lock().await;
                             lobby.full_state_message() // -> ServerMessage::GameState
                         };
                         if crate::routes::ws::send_message(ws_sender, snapshot).await.is_err() {

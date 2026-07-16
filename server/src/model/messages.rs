@@ -24,7 +24,6 @@ pub struct PlaceMessage {
 #[derive(Serialize, Deserialize, Debug)]
 #[serde(tag = "action", content = "payload", rename_all = "camelCase")]
 pub enum ClientMessage {
-    JoinLobby(usize),
     Place(PlaceMessage),
     SellById { entity_id: u64 },
     SkipToCombat,
@@ -35,12 +34,8 @@ pub enum ClientMessage {
     UpgradeKing {},
     /// Client detected a seq gap (missed a delta) and asks for a direct resync.
     RequestFullState,
-}
-
-#[derive(Serialize, Clone, Debug)]
-pub struct LobbyInfo {
-    pub id: usize,
-    pub player_count: usize,
+    JoinQueue,
+    LeaveQueue,
 }
 
 #[derive(Serialize, Clone, Debug, PartialEq)]
@@ -109,13 +104,16 @@ pub struct GameStateDelta {
 #[derive(Serialize, Clone, Debug)]
 #[serde(tag = "type", content = "data")]
 pub enum ServerMessage {
-    LobbyStatus(Vec<LobbyInfo>),
     GameState(SerializableGameState),
     GameStateDelta(GameStateDelta),
     CombatEvents(Vec<CombatEvent>),
     PlayerId(i64),
     Error(String),
     UnitInfo(UnitInfoData),
+    /// Ack: the player is in the matchmaking queue ("searching…").
+    Queued,
+    /// A match was created; the client should proceed to the game screen.
+    MatchFound,
 }
 
 #[cfg(test)]
@@ -268,5 +266,31 @@ mod tests {
         assert!(json.contains("\"attacker_id\":1"));
         assert!(json.contains("\"attack_type\":\"FireMagical\""));
         assert!(json.contains("\"x\":10.0"));
+    }
+
+    #[test]
+    fn deserialize_join_queue() {
+        let json = r#"{"action":"joinQueue"}"#;
+        let msg: ClientMessage = serde_json::from_str(json).unwrap();
+        assert!(matches!(msg, ClientMessage::JoinQueue));
+    }
+
+    #[test]
+    fn deserialize_leave_queue() {
+        let json = r#"{"action":"leaveQueue"}"#;
+        let msg: ClientMessage = serde_json::from_str(json).unwrap();
+        assert!(matches!(msg, ClientMessage::LeaveQueue));
+    }
+
+    #[test]
+    fn serialize_queued_and_match_found() {
+        assert_eq!(
+            serde_json::to_string(&ServerMessage::Queued).unwrap(),
+            r#"{"type":"Queued"}"#
+        );
+        assert_eq!(
+            serde_json::to_string(&ServerMessage::MatchFound).unwrap(),
+            r#"{"type":"MatchFound"}"#
+        );
     }
 }

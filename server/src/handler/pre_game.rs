@@ -1,88 +1,101 @@
 use crate::{
-    model::{
-        messages::{ClientMessage, ServerMessage},
-        player::Player,
-    },
-    routes::ws::{broadcast_lobby_status, send_message},
+    handler::matchmaking::{self, JoinQueueOutcome},
+    model::messages::{ClientMessage, ServerMessage},
+    routes::ws::send_message,
     state::{ServerState, UpgradedWebSocket},
 };
 use futures_util::{
-    SinkExt, StreamExt,
+    StreamExt,
     stream::{SplitSink, SplitStream},
 };
-use tokio::sync::{broadcast, mpsc};
+use tokio::sync::mpsc;
 use tokio_tungstenite::tungstenite::Message;
 
 pub enum PreGameLoopResult {
-    Joined(usize),
+    Joined(u64), // match_id
     ClientDisconnected,
     ForceDisconnect,
 }
 
+/// Pre-game phase: the client is idle until it sends JoinQueue. Once queued it
+/// waits for a pairing (or cancels with LeaveQueue). Pairing outcomes:
+/// - Matched immediately: reply MatchFound, return Joined(match_id).
+/// - Waiting: reply Queued, then select over the oneshot / LeaveQueue / disconnect.
 pub async fn pre_game_loop(
     ws_sender: &mut SplitSink<UpgradedWebSocket, Message>,
     ws_receiver: &mut SplitStream<UpgradedWebSocket>,
     server_state: &ServerState,
-    lobby_rx: &mut broadcast::Receiver<String>,
     player_id: i64,
     username: String,
     shutdown_rx: &mut mpsc::Receiver<()>,
 ) -> PreGameLoopResult {
-    let mut result = PreGameLoopResult::ClientDisconnected;
-
     loop {
         tokio::select! {
             _ = shutdown_rx.recv() => {
-                result = PreGameLoopResult::ForceDisconnect;
-                break;
-            },
-            Ok(msg) = lobby_rx.recv() => {
-                if ws_sender.send(Message::Text(msg.into())).await.is_err() {
-                    break;
-                }
+                return PreGameLoopResult::ForceDisconnect;
             },
             maybe_msg = ws_receiver.next() => {
                 match maybe_msg {
-                    Some(Ok(msg)) => {
-                        if let Message::Text(text) = msg {
-                            if let Ok(ClientMessage::JoinLobby(lobby_id)) = serde_json::from_str(&text) {
-                                let mut should_break = false;
-                                {
-                                    if let Some(lobby_arc) = server_state.lobbies.get(lobby_id) {
-                                        let mut lobby = lobby_arc.lock().await;
-                                        if lobby.players.len() < 2 {
-                                            // A finished match may still occupy this lobby
-                                            // (e.g. the winner stayed after a forfeit).
-                                            lobby.reset_if_finished();
-                                            lobby.players.push(Player::new(player_id, username.clone(), 100));
-                                            if lobby.players.len() == 2 {
-                                                let generation = lobby.game_generation;
-                                                tokio::spawn(crate::handler::game_loop::run_game_loop(server_state.clone(), lobby_id, generation));
-                                            }
-                                            result = PreGameLoopResult::Joined(lobby_id);
-                                            should_break = true;
-                                        } else {
-                                            let _ = send_message(ws_sender, ServerMessage::Error("Lobby is full".into())).await;
-                                        }
-                                    } else {
-                                        let _ = send_message(ws_sender, ServerMessage::Error("Lobby does not exist".into())).await;
-                                    }
+                    Some(Ok(Message::Text(text))) => {
+                        if let Ok(ClientMessage::JoinQueue) = serde_json::from_str(&text) {
+                            match matchmaking::join_queue(server_state, player_id, username.clone()).await {
+                                JoinQueueOutcome::Matched(match_id) => {
+                                    let _ = send_message(ws_sender, ServerMessage::MatchFound).await;
+                                    return PreGameLoopResult::Joined(match_id);
                                 }
-
-                                if should_break {
-                                    broadcast_lobby_status(server_state).await;
-                                    break;
+                                JoinQueueOutcome::Waiting(mut match_rx) => {
+                                    if send_message(ws_sender, ServerMessage::Queued).await.is_err() {
+                                        matchmaking::leave_queue(server_state, player_id).await;
+                                        return PreGameLoopResult::ClientDisconnected;
+                                    }
+                                    // Waiting-in-queue inner loop.
+                                    loop {
+                                        tokio::select! {
+                                            _ = shutdown_rx.recv() => {
+                                                matchmaking::leave_queue(server_state, player_id).await;
+                                                return PreGameLoopResult::ForceDisconnect;
+                                            },
+                                            result = &mut match_rx => {
+                                                match result {
+                                                    Ok(match_id) => {
+                                                        let _ = send_message(ws_sender, ServerMessage::MatchFound).await;
+                                                        return PreGameLoopResult::Joined(match_id);
+                                                    }
+                                                    // Sender dropped: our entry was replaced
+                                                    // (defensive; shouldn't happen for a live
+                                                    // connection). Back to idle.
+                                                    Err(_) => break,
+                                                }
+                                            },
+                                            maybe_msg = ws_receiver.next() => {
+                                                match maybe_msg {
+                                                    Some(Ok(Message::Text(text))) => {
+                                                        if let Ok(ClientMessage::LeaveQueue) = serde_json::from_str(&text) {
+                                                            if matchmaking::leave_queue(server_state, player_id).await {
+                                                                break; // back to idle pre-game
+                                                            }
+                                                            // false: a pairing already took our
+                                                            // entry — the match wins; keep
+                                                            // waiting for match_rx to fire.
+                                                        }
+                                                    },
+                                                    Some(Ok(_)) => {},
+                                                    Some(Err(_)) | None => {
+                                                        matchmaking::leave_queue(server_state, player_id).await;
+                                                        return PreGameLoopResult::ClientDisconnected;
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
                                 }
                             }
                         }
                     },
-                    Some(Err(_)) | None => {
-                        break;
-                    }
+                    Some(Ok(_)) => {},
+                    Some(Err(_)) | None => return PreGameLoopResult::ClientDisconnected,
                 }
             }
         }
     }
-
-    result
 }

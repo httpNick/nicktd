@@ -18,7 +18,8 @@ interface UnitStaticInfo {
 }
 
 type ClientMessagePayload =
-    | { action: 'joinLobby'; payload: number }
+    | { action: 'joinQueue' }
+    | { action: 'leaveQueue' }
     | { action: 'place'; payload: { shape: string; row: number; col: number } }
     | { action: 'sellById'; payload: { entity_id: number } }
     | { action: 'skipToCombat' }
@@ -54,7 +55,8 @@ interface GameStateDelta {
 }
 
 type ServerMessage =
-    | { type: 'LobbyStatus'; data: any[] }
+    | { type: 'Queued' }
+    | { type: 'MatchFound' }
     | { type: 'GameState'; data: GameState }
     | { type: 'GameStateDelta'; data: GameStateDelta }
     | { type: 'CombatEvents'; data: CombatEvent[] }
@@ -79,7 +81,9 @@ const loginForm = document.getElementById('login-form') as HTMLFormElement;
 const authStatus = document.getElementById('auth-status') as HTMLDivElement;
 
 // Lobby elements
-const lobbyList = document.getElementById('lobby-list') as HTMLDivElement;
+const queueBtn = document.getElementById('queue-btn') as HTMLButtonElement;
+const cancelQueueBtn = document.getElementById('cancel-queue-btn') as HTMLButtonElement;
+const queueStatus = document.getElementById('queue-status') as HTMLParagraphElement;
 
 // Game elements
 const leaveLobbyButton = document.getElementById('leave-lobby') as HTMLButtonElement;
@@ -226,8 +230,15 @@ function connectAndShowLobby() {
     socket.onmessage = function (event) {
         const serverMsg: ServerMessage = JSON.parse(event.data);
         switch (serverMsg.type) {
-            case 'LobbyStatus':
-                renderLobbies(serverMsg.data);
+            case 'Queued':
+                queueBtn.style.display = 'none';
+                cancelQueueBtn.style.display = 'inline-block';
+                queueStatus.textContent = 'Searching for opponent…';
+                break;
+            case 'MatchFound':
+                isInGame = true;
+                resetQueueUi();
+                showGameView();
                 break;
             case 'GameState':
                 if (!isInGame) return;
@@ -274,30 +285,20 @@ function connectAndShowLobby() {
 }
 
 
-function renderLobbies(lobbies: any[]) {
-    lobbyList.innerHTML = '';
-    lobbies.forEach(lobby => {
-        const lobbyEl = document.createElement('div');
-        lobbyEl.className = 'col s12 m6 l4';
-        lobbyEl.innerHTML = `
-            <div class="card blue-grey darken-1">
-                <div class="card-content white-text"><span class="card-title">Lobby ${lobby.id + 1}</span><p>Players: ${lobby.player_count} / 2</p></div>
-                <div class="card-action"><a href="#" class="join-lobby-btn" data-lobby-id="${lobby.id}" ${lobby.player_count >= 2 ? 'disabled' : ''}>Join</a></div>
-            </div>`;
-        lobbyList.appendChild(lobbyEl);
-    });
-    document.querySelectorAll('.join-lobby-btn').forEach(button => {
-        const btn = button as HTMLAnchorElement;
-        if (!btn.hasAttribute('disabled')) {
-            btn.onclick = (e) => {
-                e.preventDefault();
-                isInGame = true;
-                const lobbyId = parseInt(btn.getAttribute('data-lobby-id')!);
-                socket?.send(JSON.stringify({ action: 'joinLobby', payload: lobbyId }));
-            };
-        }
-    });
+function resetQueueUi() {
+    queueBtn.style.display = 'inline-block';
+    cancelQueueBtn.style.display = 'none';
+    queueStatus.textContent = '';
 }
+
+queueBtn.onclick = () => {
+    socket?.send(JSON.stringify({ action: 'joinQueue' }));
+};
+
+cancelQueueBtn.onclick = () => {
+    socket?.send(JSON.stringify({ action: 'leaveQueue' }));
+    resetQueueUi();
+};
 
 function applyPanelBoardSide(): void {
     if (myPlayerId === null) return;
@@ -491,6 +492,7 @@ function handleLeaveLobby() {
     mercPanel.hide();
     kingUpgradePanel.hide();
     renderer.reset();
+    resetQueueUi();
     showLobbyView();
 }
 
