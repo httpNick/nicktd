@@ -7,17 +7,47 @@
     <!-- Materialize CSS -->
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/materialize/1.0.0/css/materialize.min.css">
     <style>
-        body { background-color: #333; color: white; }
+        body {
+            background-color: var(--td-bg-deep, #0a0e1a);
+            color: var(--td-text-primary, #e5e7eb);
+            font-family: 'Segoe UI', system-ui, sans-serif;
+        }
         .container { margin-top: 50px; }
         #auth-view { max-width: 500px; }
-        #lobby-selection, #game-view { display: none; /* Hidden by default */ }
+        #lobby-selection, #game-view { display: none; }
         #game-view { flex-direction: column; align-items: flex-start; }
         #lobby-selection h2 { text-align: center; }
         .lobby-card { margin-bottom: 20px; }
-        canvas { border: 2px solid #fff; }
+
+        #game-canvas-host canvas {
+            border: 1px solid var(--td-grid-line);
+            border-radius: 6px;
+            box-shadow: 0 0 24px rgba(34, 211, 238, 0.12);
+        }
+
+        #controls { margin-bottom: 8px; }
+        #controls button {
+            background: var(--td-bg-panel);
+            color: var(--td-text-primary);
+            border: 1px solid var(--td-grid-line);
+            border-radius: 4px;
+            padding: 6px 14px;
+            cursor: pointer;
+            font-size: 0.9em;
+            transition: border-color 0.15s, box-shadow 0.15s;
+        }
+        #controls button:hover {
+            border-color: var(--td-accent);
+            box-shadow: 0 0 8px rgba(34, 211, 238, 0.35);
+        }
+        #game-status { margin-bottom: 6px; color: var(--td-text-muted); }
+        #game-status span { color: var(--td-text-primary); font-weight: 600; }
+        #gold-display { color: var(--td-accent-gold) !important; }
+
         #ui-panel {
-            background-color: rgba(0, 0, 0, 0.7);
-            border: 2px solid #888;
+            background-color: var(--td-bg-panel);
+            border: 1px solid var(--td-grid-line);
+            border-radius: 6px;
             padding: 10px;
             flex-direction: row;
             gap: 10px;
@@ -26,42 +56,48 @@
             width: 700px;
             box-sizing: border-box;
         }
-        .panel-portrait canvas { border: 1px solid #aaa; display: block; }
+        .panel-portrait canvas { border: 1px solid var(--td-grid-line); display: block; border-radius: 4px; }
         .panel-info { flex: 1; display: flex; flex-direction: column; gap: 4px; }
-        .panel-name { font-size: 1.1em; font-weight: bold; margin-bottom: 4px; }
+        .panel-name { font-size: 1.1em; font-weight: bold; color: var(--td-accent); }
         .bar-row { display: flex; align-items: center; gap: 6px; }
-        .bar-label { width: 22px; font-size: 0.85em; color: #ccc; }
-        .bar-track { flex: 1; height: 12px; background: #444; border-radius: 3px; overflow: hidden; }
+        .bar-label { width: 22px; font-size: 0.85em; color: var(--td-text-muted); }
+        .bar-track { flex: 1; height: 12px; background: #0d1120; border-radius: 6px; overflow: hidden; }
         .bar-fill { height: 100%; width: 100%; transition: width 0.1s; }
-        .hp-fill { background: #2e8b57; }
-        .mana-fill { background: #4169e1; }
-        .bar-numeric { width: 70px; font-size: 0.8em; text-align: right; }
-        .worker-state { font-size: 0.85em; color: #ccc; }
+        .hp-fill { background: var(--td-hp-fill); box-shadow: 0 0 6px var(--td-hp-fill); }
+        .mana-fill { background: var(--td-mana-fill); box-shadow: 0 0 6px var(--td-mana-fill); }
+        .bar-numeric { width: 70px; font-size: 0.8em; text-align: right; color: var(--td-text-muted); }
+        .worker-state { font-size: 0.85em; color: var(--td-text-muted); }
         .panel-stats { min-width: 140px; display: flex; flex-direction: column; gap: 3px; }
         .stat-row { display: flex; justify-content: space-between; gap: 8px; font-size: 0.85em; }
-        .boss-row { color: #ff6600; font-weight: bold; }
+        .boss-row { color: var(--td-fx-fire); font-weight: bold; }
         .panel-abilities { min-width: 90px; display: flex; flex-direction: column; gap: 6px; align-items: flex-start; }
+
         #mercenary-panel {
-            background-color: rgba(0, 0, 0, 0.85);
-            border: 2px solid #8B0000;
+            background-color: var(--td-bg-panel);
+            border: 1px solid var(--td-merc-building);
+            border-radius: 6px;
+            box-shadow: 0 0 12px rgba(153, 27, 27, 0.35);
             padding: 10px 14px;
             margin-top: 8px;
             width: 700px;
             box-sizing: border-box;
         }
         .merc-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
-        .merc-header span { font-size: 1.1em; font-weight: bold; color: #FFD700; }
+        .merc-header span { font-size: 1.1em; font-weight: bold; color: var(--td-accent-gold); }
         .merc-unit-list { display: flex; flex-direction: column; gap: 6px; }
         .merc-unit-row { display: flex; align-items: center; gap: 12px; font-size: 0.9em; }
         .merc-unit-name { min-width: 90px; font-weight: bold; }
-        .merc-unit-cost { min-width: 40px; color: #FFD700; }
-        .merc-unit-income { min-width: 80px; color: #7FFF00; }
-        .merc-send-btn { margin: 0; padding: 0 10px; height: 28px; background: #8B0000; color: #fff; border: none; border-radius: 3px; cursor: pointer; font-size: 0.85em; }
-        .merc-send-btn:hover { background: #a00; }
+        .merc-unit-cost { min-width: 40px; color: var(--td-accent-gold); }
+        .merc-unit-income { min-width: 80px; color: var(--td-enemy); }
+        .merc-send-btn { margin: 0; padding: 0 10px; height: 28px; background: var(--td-merc-building); color: #fff; border: none; border-radius: 3px; cursor: pointer; font-size: 0.85em; }
+        .merc-send-btn:hover { background: #b91c1c; }
         .merc-send-btn[data-unaffordable="true"] { opacity: 0.4; cursor: not-allowed; pointer-events: none; }
+
         #king-upgrade-panel {
-            background-color: rgba(0, 0, 0, 0.85);
-            border: 2px solid #FFD700;
+            background-color: var(--td-bg-panel);
+            border: 1px solid var(--td-accent-gold);
+            border-radius: 6px;
+            box-shadow: 0 0 12px rgba(251, 191, 36, 0.25);
             padding: 10px 14px;
             margin-top: 8px;
             width: 340px;
@@ -69,42 +105,39 @@
             font-size: 0.9em;
         }
         .king-panel-header { margin-bottom: 6px; }
-        .king-panel-title { font-size: 1.05em; font-weight: bold; color: #FFD700; }
-        .king-panel-hp { color: #ccc; margin-bottom: 4px; }
-        .king-panel-upgrade-info { color: #aaffaa; margin-bottom: 6px; font-size: 0.85em; }
+        .king-panel-title { font-size: 1.05em; font-weight: bold; color: var(--td-accent-gold); }
+        .king-panel-hp { color: var(--td-text-muted); margin-bottom: 4px; }
+        .king-panel-upgrade-info { color: var(--td-hp-fill); margin-bottom: 6px; font-size: 0.85em; }
         .king-upgrade-btn {
             padding: 0 12px;
             height: 28px;
-            background: #7a5900;
-            color: #FFD700;
-            border: 1px solid #FFD700;
+            background: transparent;
+            color: var(--td-accent-gold);
+            border: 1px solid var(--td-accent-gold);
             border-radius: 3px;
             cursor: pointer;
             font-size: 0.85em;
+            transition: box-shadow 0.15s;
         }
-        .king-upgrade-btn:hover:not(:disabled) { background: #a07800; }
+        .king-upgrade-btn:hover:not(:disabled) { box-shadow: 0 0 10px rgba(251, 191, 36, 0.5); }
         .king-upgrade-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
         #game-over-overlay {
             display: none;
             position: fixed;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
-            background-color: rgba(0, 0, 0, 0.82);
+            top: 0; left: 0;
+            width: 100%; height: 100%;
+            background-color: rgba(5, 8, 16, 0.88);
             flex-direction: column;
             justify-content: center;
             align-items: center;
             gap: 20px;
             z-index: 1000;
         }
-        #game-result-title {
-            font-size: 4em;
-            margin: 0;
-        }
-        #game-result-title.defeat { color: #ff4444; text-shadow: 0 0 20px #ff0000; }
-        #game-result-title.victory { color: #FFD700; text-shadow: 0 0 20px #ffaa00; }
-        #game-result-subtitle { color: #ccc; font-size: 1.2em; margin: 0; }
+        #game-result-title { font-size: 4em; margin: 0; letter-spacing: 6px; }
+        #game-result-title.defeat { color: var(--td-fx-error); text-shadow: 0 0 24px var(--td-fx-error); }
+        #game-result-title.victory { color: var(--td-accent-gold); text-shadow: 0 0 24px var(--td-accent-gold); }
+        #game-result-subtitle { color: var(--td-text-muted); font-size: 1.2em; margin: 0; }
         #overlay-leave-lobby { margin-top: 10px; }
     </style>
 </head>
@@ -165,7 +198,7 @@
             <button id="skip-to-combat">Start Combat</button>
             <button id="leave-lobby">Leave Lobby</button>
         </div>
-        <canvas id="gameCanvas" width="1400" height="720"></canvas>
+        <div id="game-canvas-host"></div>
         <div id="mercenary-panel">
             <div class="merc-header">
                 <span>⚔ Send Units</span>

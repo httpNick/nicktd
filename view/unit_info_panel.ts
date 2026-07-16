@@ -30,7 +30,7 @@ export interface UnitInfoPanelCallbacks {
     onSell: (entityId: number) => void;
 }
 
-// Visual unit size within the 80×80 portrait canvas (matches drawUnits geometry)
+// Visual unit size within the 80×80 portrait canvas
 const PORTRAIT_UNIT_SIZE = 60;
 
 export class UnitInfoPanel {

@@ -2,13 +2,13 @@
   "name": "view",
   "version": "1.0.0",
   "description": "",
-  "main": "animations.js",
+  "main": "app.ts",
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
     "preview": "vite preview",
     "type-check": "tsc --noEmit",
-    "test": "node --import tsx --test test_animations.ts test_unit_info_panel.ts test_mercenary_panel.ts"
+    "test": "node --import tsx --test test_unit_info_panel.ts test_mercenary_panel.ts test_theme.ts test_visual_diff.ts"
   },
   "keywords": [],
   "author": "",
@@ -20,7 +20,6 @@
     "vite": "^7.3.1"
   },
   "dependencies": {
-    "@types/animejs": "^3.1.13",
-    "animejs": "^3.2.2"
+    "pixi.js": "8.19.0"
   }
 }
