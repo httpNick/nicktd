@@ -1,25 +1,11 @@
-import { AnimationManager, DamageType, Position } from './animations';
+import { initRenderer, RendererHandle, ClickHit } from './renderer';
+import { Unit, Player, CombatEvent } from './types';
+import { applyThemeToDom } from './theme';
 import { UnitInfoPanel } from './unit_info_panel';
 import { MercenaryPanel } from './mercenary_panel';
 import { KingUpgradePanel } from './king_upgrade_panel';
 
 // --- TYPES & INTERFACES ---
-interface Unit {
-    id: number;
-    shape: 'Square' | 'Circle' | 'Triangle';
-    x: number;
-    y: number;
-    owner_id: number;
-    is_enemy: boolean;
-    current_hp: number;
-    max_hp: number;
-    is_worker: boolean;
-    current_mana?: number;
-    max_mana?: number;
-    worker_state?: 'MovingToVein' | 'Mining' | 'MovingToCart';
-    is_king: boolean;
-}
-
 interface UnitStaticInfo {
     entity_id: number;
     attack_damage: number | null;
@@ -43,15 +29,6 @@ type ClientMessagePayload =
     | { action: 'upgradeKing'; payload: Record<string, never> }
     | { action: 'requestFullState' };
 
-interface Player {
-    id: number;
-    username: string;
-    gold: number;
-    income: number;
-    king_tier: number;
-    spawning_queue: ('Square' | 'Circle' | 'Triangle')[];
-}
-
 interface GameState {
     units: Unit[];
     players: Player[];
@@ -74,14 +51,6 @@ interface GameStateDelta {
     removed: number[];
     players: Player[] | null;
     phase_info: PhaseInfo | null;
-}
-
-interface CombatEvent {
-    attacker_id: number;
-    target_id: number;
-    attack_type: DamageType;
-    start_pos: Position;
-    end_pos: Position;
 }
 
 type ServerMessage =
@@ -113,34 +82,12 @@ const authStatus = document.getElementById('auth-status') as HTMLDivElement;
 const lobbyList = document.getElementById('lobby-list') as HTMLDivElement;
 
 // Game elements
-const canvas = document.getElementById('gameCanvas') as HTMLCanvasElement;
-const ctx = canvas.getContext('2d')!;
 const leaveLobbyButton = document.getElementById('leave-lobby') as HTMLButtonElement;
 const gamePhaseEl = document.getElementById('game-phase') as HTMLSpanElement;
 const gameTimerEl = document.getElementById('game-timer') as HTMLSpanElement;
 const goldDisplay = document.getElementById('gold-display') as HTMLSpanElement;
 const livesDisplay = document.getElementById('lives-display') as HTMLSpanElement;
 const hireWorkerBtn = document.getElementById('hire-worker-btn') as HTMLButtonElement;
-
-const BOARD_SIZE = 10;
-const SQUARE_SIZE = 60;
-const GAP_SIZE = 200;
-const LEFT_BOARD_END = 600;
-const RIGHT_BOARD_START = 800;
-
-// King zone constants
-const TOTAL_HEIGHT = 600;
-const KING_ZONE_HEIGHT = 120;
-const CANVAS_HEIGHT = 720; // TOTAL_HEIGHT + KING_ZONE_HEIGHT
-
-const KING_Y = 660;           // TOTAL_HEIGHT + 60
-const KING_LEFT_X = 300;      // BOARD_SIZE / 2 * SQUARE_SIZE
-const KING_RIGHT_X = 1100;    // RIGHT_BOARD_START + BOARD_SIZE / 2 * SQUARE_SIZE
-const KING_RADIUS = 30;
-
-const MERC_BUILDING_X = LEFT_BOARD_END + GAP_SIZE / 2;  // 700
-const MERC_BUILDING_Y = [150, 450] as const;
-const MERC_BUILDING_HALF = 18;
 
 let selectedShape: 'Square' | 'Circle' | 'Triangle' = 'Square';
 let unitMap = new Map<number, Unit>();
@@ -151,8 +98,6 @@ let socket: WebSocket | null = null;
 let isInGame = false;
 let gamePhase = '';
 let gameTimer = 0;
-
-const animationManager = new AnimationManager();
 
 const panel = new UnitInfoPanel(
     document.getElementById('ui-panel') as HTMLElement,
@@ -184,6 +129,10 @@ const kingUpgradePanel = new KingUpgradePanel({
         }
     },
 });
+
+applyThemeToDom(document.documentElement);
+const rendererHost = document.getElementById('game-canvas-host') as HTMLDivElement;
+const renderer: RendererHandle = await initRenderer(rendererHost);
 
 const API_BASE_URL = 'http://127.0.0.1:9001';
 
@@ -299,6 +248,7 @@ function connectAndShowLobby() {
             case 'Error':
                 // @ts-ignore
                 M.toast({ html: serverMsg.data });
+                renderer.flashError(serverMsg.data);
                 break;
             case 'UnitInfo':
                 panel.applyStaticInfo(serverMsg.data);
@@ -345,188 +295,6 @@ function renderLobbies(lobbies: any[]) {
                 const lobbyId = parseInt(btn.getAttribute('data-lobby-id')!);
                 socket?.send(JSON.stringify({ action: 'joinLobby', payload: lobbyId }));
             };
-        }
-    });
-}
-
-function drawKingZone() {
-    // Left board king zone: x = 0..600, y = 600..720
-    ctx.fillStyle = '#1a1a2e';
-    ctx.fillRect(0, TOTAL_HEIGHT, LEFT_BOARD_END, KING_ZONE_HEIGHT);
-
-    // Right board king zone: x = 800..1400, y = 600..720
-    ctx.fillRect(RIGHT_BOARD_START, TOTAL_HEIGHT, LEFT_BOARD_END, KING_ZONE_HEIGHT);
-
-    // Border / separator lines at y = 600
-    ctx.strokeStyle = '#444488';
-    ctx.lineWidth = 2;
-    ctx.beginPath();
-    ctx.moveTo(0, TOTAL_HEIGHT);
-    ctx.lineTo(LEFT_BOARD_END, TOTAL_HEIGHT);
-    ctx.stroke();
-
-    ctx.beginPath();
-    ctx.moveTo(RIGHT_BOARD_START, TOTAL_HEIGHT);
-    ctx.lineTo(RIGHT_BOARD_START + LEFT_BOARD_END, TOTAL_HEIGHT);
-    ctx.stroke();
-}
-
-function drawCheckerboard() {
-    // Left Board
-    for (let row = 0; row < BOARD_SIZE; row++) {
-        for (let col = 0; col < BOARD_SIZE; col++) {
-            // Rows 8 and 9 are king protection zone — draw dimmed
-            if (row >= 8) {
-                ctx.fillStyle = (row + col) % 2 === 0 ? '#888' : '#666';
-            } else {
-                ctx.fillStyle = (row + col) % 2 === 0 ? '#EEE' : '#CCC';
-            }
-            ctx.fillRect(col * SQUARE_SIZE, row * SQUARE_SIZE, SQUARE_SIZE, SQUARE_SIZE);
-        }
-    }
-    // Overlay dim for rows 8-9 on left board
-    ctx.fillStyle = 'rgba(0,0,0,0.4)';
-    ctx.fillRect(0, 8 * SQUARE_SIZE, LEFT_BOARD_END, 2 * SQUARE_SIZE);
-
-    // Right Board
-    for (let row = 0; row < BOARD_SIZE; row++) {
-        for (let col = 0; col < BOARD_SIZE; col++) {
-            if (row >= 8) {
-                ctx.fillStyle = (row + col) % 2 === 0 ? '#888' : '#666';
-            } else {
-                ctx.fillStyle = (row + col) % 2 === 0 ? '#EEE' : '#CCC';
-            }
-            ctx.fillRect(RIGHT_BOARD_START + col * SQUARE_SIZE, row * SQUARE_SIZE, SQUARE_SIZE, SQUARE_SIZE);
-        }
-    }
-    // Overlay dim for rows 8-9 on right board
-    ctx.fillStyle = 'rgba(0,0,0,0.4)';
-    ctx.fillRect(RIGHT_BOARD_START, 8 * SQUARE_SIZE, LEFT_BOARD_END, 2 * SQUARE_SIZE);
-}
-
-function drawWorkerArea() {
-    ctx.strokeStyle = '#FFF';
-
-    // Board boundaries
-    ctx.beginPath();
-    ctx.moveTo(LEFT_BOARD_END, 0);
-    ctx.lineTo(LEFT_BOARD_END, TOTAL_HEIGHT);
-    ctx.stroke();
-
-    ctx.beginPath();
-    ctx.moveTo(RIGHT_BOARD_START, 0);
-    ctx.lineTo(RIGHT_BOARD_START, TOTAL_HEIGHT);
-    ctx.stroke();
-
-    // Central horizontal separator
-    ctx.beginPath();
-    ctx.moveTo(LEFT_BOARD_END, 300);
-    ctx.lineTo(RIGHT_BOARD_START, 300);
-    ctx.stroke();
-
-    currentPlayers.forEach((player, index) => {
-        const veinY = index === 0 ? 50 : 350;
-        const cartY = index === 0 ? 250 : 550;
-        const labelY = index === 0 ? 20 : 320;
-        const textX = LEFT_BOARD_END + 10;
-
-        ctx.fillStyle = '#FFF';
-        ctx.font = '16px Arial';
-        ctx.fillText(player.username || `Player ${index + 1}`, textX, labelY);
-        ctx.fillText(`Gold: ${player.gold}`, textX + 110, labelY);
-
-        ctx.fillStyle = '#FFD700';
-        ctx.beginPath();
-        ctx.arc(LEFT_BOARD_END + (GAP_SIZE / 2), veinY, 20, 0, 2 * Math.PI);
-        ctx.fill();
-        ctx.fillStyle = '#000';
-        ctx.fillText("Vein", LEFT_BOARD_END + (GAP_SIZE / 2) - 15, veinY + 5);
-
-        ctx.fillStyle = '#8B4513';
-        ctx.fillRect(LEFT_BOARD_END + (GAP_SIZE / 2) - 20, cartY - 20, 40, 40);
-        ctx.fillStyle = '#FFF';
-        ctx.fillText("Cart", LEFT_BOARD_END + (GAP_SIZE / 2) - 15, cartY + 5);
-    });
-}
-
-function drawUnits(units: Unit[]) {
-    units.forEach(unit => {
-        const { shape, x, y, owner_id, is_enemy, is_king } = unit;
-
-        if (is_king) {
-            // Kings get a large distinct render
-            const isMyKing = owner_id === myPlayerId;
-            ctx.fillStyle = isMyKing ? '#FFD700' : '#8B0000';
-
-            ctx.beginPath();
-            ctx.arc(x, y, KING_RADIUS, 0, 2 * Math.PI);
-            ctx.fill();
-
-            // King crown outline
-            ctx.strokeStyle = isMyKing ? '#FFF' : '#FF6666';
-            ctx.lineWidth = 2;
-            ctx.stroke();
-            ctx.lineWidth = 1;
-
-            // King label
-            ctx.fillStyle = isMyKing ? '#000' : '#FFF';
-            ctx.font = 'bold 10px Arial';
-            ctx.textAlign = 'center';
-            ctx.fillText('KING', x, y + 4);
-            ctx.textAlign = 'left';
-        } else {
-            if (is_enemy) {
-                ctx.fillStyle = '#2E8B57';
-            } else {
-                ctx.fillStyle = owner_id === myPlayerId ? '#88F' : '#F88';
-            }
-
-            if (shape === 'Square') {
-                ctx.fillRect(x - (SQUARE_SIZE / 2 - 10), y - (SQUARE_SIZE / 2 - 10), SQUARE_SIZE - 20, SQUARE_SIZE - 20);
-            } else if (shape === 'Circle') {
-                ctx.beginPath(); ctx.arc(x, y, SQUARE_SIZE / 2 - 10, 0, 2 * Math.PI); ctx.fill();
-            } else if (shape === 'Triangle') {
-                ctx.beginPath(); ctx.moveTo(x, y - (SQUARE_SIZE / 2 - 10)); ctx.lineTo(x - (SQUARE_SIZE / 2 - 10), y + (SQUARE_SIZE / 2 - 10)); ctx.lineTo(x + (SQUARE_SIZE / 2 - 10), y + (SQUARE_SIZE / 2 - 10)); ctx.closePath(); ctx.fill();
-            }
-        }
-    });
-
-    units.forEach(unit => {
-        const { x, y, current_hp, max_hp, is_worker, is_king } = unit;
-        if (!is_worker && current_hp !== undefined && max_hp !== undefined) {
-            if (is_king) {
-                // Wider HP bar for king
-                const barWidth = KING_RADIUS * 2 + 10;
-                const barHeight = 8;
-                const barX = x - barWidth / 2;
-                const barY = y - KING_RADIUS - 14;
-
-                ctx.fillStyle = '#F00';
-                ctx.fillRect(barX, barY, barWidth, barHeight);
-
-                const healthPercent = Math.max(0, Math.min(1, current_hp / max_hp));
-                ctx.fillStyle = '#0F0';
-                ctx.fillRect(barX, barY, barWidth * healthPercent, barHeight);
-
-                // HP text
-                ctx.fillStyle = '#FFF';
-                ctx.font = '9px Arial';
-                ctx.textAlign = 'center';
-                ctx.fillText(`${current_hp}/${max_hp}`, x, barY - 2);
-                ctx.textAlign = 'left';
-            } else {
-                const barWidth = SQUARE_SIZE - 20;
-                const barHeight = 6;
-                const barX = x - barWidth / 2;
-                const barY = y - (SQUARE_SIZE / 2);
-
-                ctx.fillStyle = '#F00';
-                ctx.fillRect(barX, barY, barWidth, barHeight);
-
-                const healthPercent = Math.max(0, Math.min(1, current_hp / max_hp));
-                ctx.fillStyle = '#0F0';
-                ctx.fillRect(barX, barY, barWidth * healthPercent, barHeight);
-            }
         }
     });
 }
@@ -629,6 +397,7 @@ function applyFullState(newState: GameState) {
     refreshDerivedDisplays();
     panel.syncDynamicState(currentUnits(), gamePhase);
     updateGameOverOverlay(newState.winner_id);
+    renderer.syncState(unitMap, currentPlayers, gamePhase, myPlayerId);
 }
 
 function applyDelta(d: GameStateDelta) {
@@ -662,82 +431,12 @@ function applyDelta(d: GameStateDelta) {
     if (d.phase_info) {
         updateGameOverOverlay(d.phase_info.winner_id);
     }
+    renderer.syncState(unitMap, currentPlayers, gamePhase, myPlayerId);
 }
 
 function handleCombatEvents(events: CombatEvent[]) {
-    events.forEach(event => {
-        const isRanged = event.attack_type === 'FireMagical' || event.attack_type === 'PhysicalPierce';
-        const type = isRanged ? 'projectile' : 'melee';
-        const duration = isRanged ? 300 : 200;
-
-        animationManager.addAnimation(
-            type,
-            event.start_pos,
-            event.end_pos,
-            duration,
-            event.attack_type
-        );
-    });
+    renderer.playCombatEvents(events);
 }
-
-function drawMercenaryBuildings() {
-    currentPlayers.forEach((_player, index) => {
-        const buildingY = MERC_BUILDING_Y[index];
-        const bx = MERC_BUILDING_X - MERC_BUILDING_HALF;
-        const by = buildingY - MERC_BUILDING_HALF;
-        const bSize = MERC_BUILDING_HALF * 2;
-
-        ctx.fillStyle = '#8B0000';
-        ctx.fillRect(bx, by, bSize, bSize);
-
-        ctx.strokeStyle = '#FFD700';
-        ctx.lineWidth = 2;
-        ctx.strokeRect(bx, by, bSize, bSize);
-
-        ctx.fillStyle = '#FFD700';
-        ctx.font = 'bold 9px Arial';
-        ctx.textAlign = 'center';
-        ctx.fillText('⚔', MERC_BUILDING_X, buildingY - 2);
-        ctx.font = '8px Arial';
-        ctx.fillText('Merc', MERC_BUILDING_X, buildingY + 9);
-        ctx.textAlign = 'left';
-    });
-}
-
-function drawSpawningGrounds() {
-    currentPlayers.forEach((player, index) => {
-        if (!player.spawning_queue || player.spawning_queue.length === 0) return;
-        const groundY = MERC_BUILDING_Y[index] + MERC_BUILDING_HALF + 14;
-        const startX = MERC_BUILDING_X - (player.spawning_queue.length * 12) / 2;
-
-        player.spawning_queue.forEach((shape, i) => {
-            const iconX = startX + i * 14;
-            const radius = shape === 'Circle' ? 8 : shape === 'Triangle' ? 6 : 4;
-            ctx.fillStyle = '#FFA500';
-            ctx.beginPath();
-            ctx.arc(iconX, groundY, radius, 0, 2 * Math.PI);
-            ctx.fill();
-        });
-    });
-}
-
-function render() {
-    if (isInGame) {
-        ctx.clearRect(0, 0, canvas.width, canvas.height);
-        drawKingZone();
-        drawCheckerboard();
-        drawWorkerArea();
-        drawUnits(currentUnits());
-        drawMercenaryBuildings();
-        drawSpawningGrounds();
-
-        animationManager.update();
-        animationManager.draw(ctx);
-    }
-    requestAnimationFrame(render);
-}
-
-requestAnimationFrame(render);
 
 // --- ONE-TIME EVENT REGISTRATION ---
 document.getElementById('selectSquare')!.onclick = () => { selectedShape = 'Square'; };
@@ -754,61 +453,33 @@ document.getElementById('skip-to-combat')!.onclick = () => {
     }
 };
 
-canvas.addEventListener('click', function (event) {
+renderer.onClick((hit: ClickHit) => {
     if (!isInGame) return;
-    const rect = canvas.getBoundingClientRect();
-    const clickX = event.clientX - rect.left;
-    const clickY = event.clientY - rect.top;
-
-    // Identify which board was clicked
-    let boardIdx: number | null = null;
-    let localX = clickX;
-    if (clickX < LEFT_BOARD_END) {
-        boardIdx = 0;
-    } else if (clickX >= RIGHT_BOARD_START && clickX < RIGHT_BOARD_START + LEFT_BOARD_END) {
-        boardIdx = 1;
-        localX = clickX - RIGHT_BOARD_START;
-    }
-
-    if (boardIdx === null) {
-        // Check if a Mercenary Building was clicked (gap area)
-        if (clickX >= LEFT_BOARD_END && clickX < RIGHT_BOARD_START && myPlayerId !== null) {
-            const myIndex = currentPlayers.findIndex(p => p.id === myPlayerId);
-            if (myIndex !== -1) {
-                const buildingY = MERC_BUILDING_Y[myIndex];
-                const dx = clickX - MERC_BUILDING_X;
-                const dy = clickY - buildingY;
-                if (dx * dx + dy * dy <= MERC_BUILDING_HALF * MERC_BUILDING_HALF) {
-                    mercPanel.toggle();
-                    return;
+    switch (hit.kind) {
+        case 'unit': {
+            const clickedUnit = unitMap.get(hit.unitId);
+            if (!clickedUnit) return;
+            panel.selectUnit(clickedUnit, myPlayerId!, gamePhase);
+            if (!panel.staticInfoCache.has(clickedUnit.id)) {
+                if (socket && socket.readyState === WebSocket.OPEN) {
+                    socket.send(JSON.stringify({ action: 'requestUnitInfo', payload: { entity_id: clickedUnit.id } }));
                 }
             }
+            return;
         }
-        panel.clearSelection();
-        return;
-    }
-
-    const unitHitSize = SQUARE_SIZE - 20;
-    const clickedUnit = currentUnits().find(s => {
-        return clickX >= s.x - unitHitSize / 2 && clickX <= s.x + unitHitSize / 2 &&
-            clickY >= s.y - unitHitSize / 2 && clickY <= s.y + unitHitSize / 2;
-    });
-
-    if (clickedUnit) {
-        panel.selectUnit(clickedUnit, myPlayerId!, gamePhase);
-        if (!panel.staticInfoCache.has(clickedUnit.id)) {
-            if (socket && socket.readyState === WebSocket.OPEN) {
-                socket.send(JSON.stringify({ action: 'requestUnitInfo', payload: { entity_id: clickedUnit.id } }));
-            }
+        case 'mercBuilding':
+            mercPanel.toggle();
+            return;
+        case 'cell': {
+            panel.clearSelection();
+            if (hit.row >= 8) return; // king protection zone — no placement
+            const placeMessage = { action: 'place', payload: { shape: selectedShape, row: hit.row, col: hit.col } };
+            if (socket && socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify(placeMessage));
+            return;
         }
-    } else {
-        panel.clearSelection();
-        const row = Math.floor(clickY / SQUARE_SIZE);
-        const col = Math.floor(localX / SQUARE_SIZE);
-        // Rows 8 and 9 are king protection zone — no placement allowed
-        if (row >= 8) return;
-        const placeMessage = { action: 'place', payload: { shape: selectedShape, row, col } };
-        if (socket && socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify(placeMessage));
+        case 'empty':
+            panel.clearSelection();
+            return;
     }
 });
 
@@ -819,6 +490,7 @@ function handleLeaveLobby() {
     panel.clearSelection();
     mercPanel.hide();
     kingUpgradePanel.hide();
+    renderer.reset();
     showLobbyView();
 }
 
