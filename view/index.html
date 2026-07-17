@@ -14,10 +14,33 @@
         }
         .container { margin-top: 50px; }
         #auth-view { max-width: 500px; }
+        /* Materialize inputs assume a light page; restyle for the dark theme. */
+        .input-field input[type=text],
+        .input-field input[type=password] {
+            color: var(--td-text-primary, #e5e7eb);
+            border-bottom: 1px solid var(--td-grid-line, #2a3558);
+        }
+        .input-field label { color: var(--td-text-muted, #9ca3af); }
+        .input-field input[type=text]:focus,
+        .input-field input[type=password]:focus {
+            border-bottom: 1px solid var(--td-accent, #22d3ee) !important;
+            box-shadow: 0 1px 0 0 var(--td-accent, #22d3ee) !important;
+        }
+        .input-field input[type=text]:focus + label,
+        .input-field input[type=password]:focus + label {
+            color: var(--td-accent, #22d3ee) !important;
+        }
+        /* Chrome autofill paints white-on-white; force theme colors. */
+        input:-webkit-autofill,
+        input:-webkit-autofill:hover,
+        input:-webkit-autofill:focus {
+            -webkit-text-fill-color: var(--td-text-primary, #e5e7eb);
+            -webkit-box-shadow: 0 0 0 1000px var(--td-bg-deep, #0a0e1a) inset;
+            caret-color: var(--td-text-primary, #e5e7eb);
+        }
         #lobby-selection, #game-view { display: none; }
         #game-view { flex-direction: column; align-items: flex-start; }
         #lobby-selection h2 { text-align: center; }
-        .lobby-card { margin-bottom: 20px; }
 
         #game-canvas-host canvas {
             border: 1px solid var(--td-grid-line);
@@ -182,8 +205,12 @@
     </div>
 
     <div id="lobby-selection" class="container">
-        <h2>Game Lobbies</h2>
-        <div id="lobby-list" class="row"></div>
+        <h2>Play</h2>
+        <div class="center-align">
+            <button id="queue-btn" class="btn-large waves-effect waves-light">Queue for Match</button>
+            <button id="cancel-queue-btn" class="btn-large red waves-effect waves-light" style="display: none;">Cancel</button>
+            <p id="queue-status"></p>
+        </div>
     </div>
 
     <div id="game-view">

@@ -38,17 +38,6 @@ impl GameState {
             wave_number: 1,
         }
     }
-
-    /// Resets the game state for a new game without replacing the `World`.
-    /// Clears all entities while preserving resources (keeps the same `WorldId`
-    /// so any existing `Schedule` remains valid).
-    pub fn reset(&mut self) {
-        self.world.clear_entities();
-        self.phase = GamePhase::Build;
-        self.phase_timer = 30.0;
-        self.wave_number = 1;
-        self.world.insert_resource(GamePhase::Build);
-    }
 }
 
 #[cfg(test)]

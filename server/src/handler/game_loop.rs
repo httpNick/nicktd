@@ -153,24 +153,24 @@ pub fn build_main_schedule() -> Schedule {
 
 pub const TICK_RATE: f32 = 30.0;
 
-pub async fn run_game_loop(server_state: ServerState, lobby_id: usize, generation: u32) {
+pub async fn run_game_loop(server_state: ServerState, match_id: u64) {
     let mut interval = tokio::time::interval(Duration::from_secs_f32(1.0 / TICK_RATE));
     let tick_delta = 1.0 / TICK_RATE;
     let mut schedule = build_main_schedule();
 
-    let Some(lobby_arc) = server_state.lobbies.get(lobby_id).cloned() else {
+    let Some(lobby_arc) = server_state.matches.read().await.get(&match_id).cloned() else {
         return;
     };
 
     loop {
         interval.tick().await;
+        // Exit when the match has been torn down (last player left).
+        if !server_state.matches.read().await.contains_key(&match_id) {
+            break;
+        }
         let mut lobby_guard = lobby_arc.lock().await;
         let lobby = &mut *lobby_guard;
         {
-            // Exit if the lobby has been reset for a new game.
-            if lobby.game_generation != generation {
-                break;
-            }
             // Insert per-tick resources.
             lobby
                 .game_state

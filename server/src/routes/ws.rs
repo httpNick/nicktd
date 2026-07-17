@@ -1,10 +1,6 @@
 use crate::{
     database, handler,
-    model::{
-        account::Account,
-        jwt,
-        messages::{LobbyInfo, ServerMessage},
-    },
+    model::{account::Account, jwt, messages::ServerMessage},
     state::{ServerState, UpgradedWebSocket},
 };
 use chrono::Utc;
@@ -147,61 +143,27 @@ async fn handle_connection(
         return;
     }
 
-    let mut final_lobby_id: Option<usize> = None; // To store lobby_id for cleanup outside the loop
+    let mut final_match_id: Option<u64> = None;
     let mut forced_disconnect = false;
 
     loop {
-        // on a new connection send the lobby status to the client.
-        let mut lobby_infos: Vec<LobbyInfo> = Vec::with_capacity(server_state.lobbies.len());
-        for (id, lobby_arc) in server_state.lobbies.iter().enumerate() {
-            let lobby = lobby_arc.lock().await;
-            lobby_infos.push(LobbyInfo {
-                id,
-                player_count: lobby.players.len(),
-            });
-        }
-
-        if send_message(&mut ws_sender, ServerMessage::LobbyStatus(lobby_infos))
-            .await
-            .is_err()
-        {
-            break;
-        }
-
-        let mut lobby_rx = server_state.lobby_tx.subscribe();
-
         match handler::pre_game::pre_game_loop(
             &mut ws_sender,
             &mut ws_receiver,
             &server_state,
-            &mut lobby_rx,
             account_id,
             username.clone(),
             &mut kill_rx,
         )
         .await
         {
-            handler::pre_game::PreGameLoopResult::Joined(lobby_id) => {
-                if let Some(old_lobby_id) = final_lobby_id {
-                    log::info!(
-                        "Player {} joining new lobby {}, removing from old lobby {}",
-                        account_id,
-                        lobby_id,
-                        old_lobby_id
-                    );
-                    handler::cleanup::remove_player_from_lobby(
-                        old_lobby_id,
-                        account_id,
-                        &server_state,
-                    )
-                    .await;
-                }
-                final_lobby_id = Some(lobby_id); // Store lobby_id here
+            handler::pre_game::PreGameLoopResult::Joined(match_id) => {
+                final_match_id = Some(match_id);
                 let result = handler::in_game::in_game_loop(
                     &mut ws_sender,
                     &mut ws_receiver,
                     &server_state,
-                    lobby_id,
+                    match_id,
                     account_id,
                     &mut kill_rx,
                 )
@@ -209,13 +171,13 @@ async fn handle_connection(
 
                 match result {
                     handler::in_game::InGameLoopResult::PlayerLeft => {
-                        handler::cleanup::remove_player_from_lobby(
-                            lobby_id,
+                        handler::cleanup::remove_player_from_match(
+                            match_id,
                             account_id,
                             &server_state,
                         )
                         .await;
-                        final_lobby_id = None;
+                        final_match_id = None;
                         continue;
                     }
                     handler::in_game::InGameLoopResult::ClientDisconnected => break,
@@ -247,8 +209,8 @@ async fn handle_connection(
     }
 
     // Call cleanup here, after the loop breaks
-    if let Some(lobby_id) = final_lobby_id {
-        handler::cleanup::cleanup(lobby_id, account_id, &server_state).await;
+    if let Some(match_id) = final_match_id {
+        handler::cleanup::cleanup(match_id, account_id, &server_state).await;
     } else {
         // Only clear session if this wasn't a forced disconnect (i.e. replaced by new session)
         if !forced_disconnect {
@@ -270,20 +232,6 @@ async fn handle_connection(
             active_conns.remove(&account_id);
         }
     }
-}
-
-pub(crate) async fn broadcast_lobby_status(state: &ServerState) {
-    let mut lobby_infos: Vec<LobbyInfo> = Vec::with_capacity(state.lobbies.len());
-    for (id, lobby_arc) in state.lobbies.iter().enumerate() {
-        let lobby = lobby_arc.lock().await;
-        lobby_infos.push(LobbyInfo {
-            id,
-            player_count: lobby.players.len(),
-        });
-    }
-    let msg = ServerMessage::LobbyStatus(lobby_infos);
-    let msg_str = serde_json::to_string(&msg).unwrap();
-    let _ = state.lobby_tx.send(msg_str);
 }
 
 pub(crate) async fn send_message(
