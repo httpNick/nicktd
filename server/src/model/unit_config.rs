@@ -97,22 +97,47 @@ pub fn get_unit_profile(shape: Shape) -> UnitProfile {
 // --- Sent Unit Balance Constants ---
 
 /// Gold cost to send each unit type.
-pub const SENT_SQUARE_COST: u32 = 5;
+pub const SENT_SQUARE_COST: u32 = 8;
 pub const SENT_TRIANGLE_COST: u32 = 20;
 pub const SENT_CIRCLE_COST: u32 = 50;
 
 /// Permanent income added to the sender per round after purchase.
 pub const SENT_SQUARE_INCOME: u32 = 1;
-pub const SENT_TRIANGLE_INCOME: u32 = 3;
-pub const SENT_CIRCLE_INCOME: u32 = 7;
+pub const SENT_TRIANGLE_INCOME: u32 = 2;
+pub const SENT_CIRCLE_INCOME: u32 = 4;
 
 /// Gold bounty awarded to the defending player on kill.
-pub const SENT_SQUARE_BOUNTY: u32 = 2;
-pub const SENT_TRIANGLE_BOUNTY: u32 = 8;
-pub const SENT_CIRCLE_BOUNTY: u32 = 20;
+pub const SENT_SQUARE_BOUNTY: u32 = 6;
+pub const SENT_TRIANGLE_BOUNTY: u32 = 12;
+pub const SENT_CIRCLE_BOUNTY: u32 = 30;
+
+/// Stable index for per-shape counters/arrays: Square 0, Triangle 1, Circle 2.
+pub fn shape_index(shape: Shape) -> usize {
+    match shape {
+        Shape::Square => 0,
+        Shape::Triangle => 1,
+        Shape::Circle => 2,
+    }
+}
+
+/// Price of the n-th send (n = 0,1,2,…) of `shape` during wave `wave`.
+/// cost = ceil(base × 1.2^(w-1) × 1.4^n). The wave factor matches the stat
+/// scaling in `spawn_sent_enemy`, so gold-per-stat is constant across waves;
+/// the repeat factor is the anti-burst curve (spec §1).
+///
+/// Computed entirely in f64 — intentionally NOT reusing
+/// `handler::wave::get_scaling_multiplier` (f32, used for stat scaling):
+/// f32 rounding lands a hair above exact integer products and `.ceil()` would
+/// overcharge by 1 gold (e.g. Circle wave 2 n=0 must be exactly 60).
+pub fn sent_unit_cost(shape: Shape, wave: u32, n_this_wave: u32) -> u32 {
+    let base = get_sent_unit_profile(shape).send_cost as f64;
+    let wave_mult = 1.2f64.powi(wave as i32 - 1);
+    let repeat_mult = 1.4f64.powi(n_this_wave as i32);
+    (base * wave_mult * repeat_mult).ceil() as u32
+}
 
 /// Health multiplier applied on top of DEFAULT_HEALTH when spawned.
-pub const SENT_SQUARE_HEALTH_MULT: f32 = 1.0;
+pub const SENT_SQUARE_HEALTH_MULT: f32 = 0.7;
 pub const SENT_TRIANGLE_HEALTH_MULT: f32 = 1.2;
 pub const SENT_CIRCLE_HEALTH_MULT: f32 = 1.5;
 
@@ -223,5 +248,56 @@ mod tests {
         assert_eq!(square.gold_cost, 25);
         assert_eq!(triangle.gold_cost, 40);
         assert_eq!(circle.gold_cost, 75);
+    }
+
+    // --- Task 1 TDD tests ---
+
+    #[test]
+    fn sent_unit_cost_matches_spec_curve_wave_1_scouts() {
+        // ceil(8 × 1.0 × 1.4^n): 8, 12, 16, 22, 31, 44, 61, 85
+        let expected = [8, 12, 16, 22, 31, 44, 61, 85];
+        for (n, &exp) in expected.iter().enumerate() {
+            assert_eq!(
+                sent_unit_cost(Shape::Square, 1, n as u32),
+                exp,
+                "scout #{} wave 1",
+                n
+            );
+        }
+    }
+
+    #[test]
+    fn sent_unit_cost_scales_with_wave_multiplier() {
+        // First send (n=0) of each wave costs ceil(base × 1.2^(w-1)).
+        assert_eq!(sent_unit_cost(Shape::Square, 2, 0), 10); // ceil(8 × 1.2)
+        assert_eq!(sent_unit_cost(Shape::Triangle, 3, 0), 29); // ceil(20 × 1.44)
+        assert_eq!(sent_unit_cost(Shape::Circle, 1, 0), 50);
+    }
+
+    #[test]
+    fn rebalanced_incomes_and_bounties() {
+        assert_eq!(get_sent_unit_profile(Shape::Square).income, 1);
+        assert_eq!(get_sent_unit_profile(Shape::Triangle).income, 2);
+        assert_eq!(get_sent_unit_profile(Shape::Circle).income, 4);
+        assert_eq!(get_sent_unit_profile(Shape::Square).bounty, 6);
+        assert_eq!(get_sent_unit_profile(Shape::Triangle).bounty, 12);
+        assert_eq!(get_sent_unit_profile(Shape::Circle).bounty, 30);
+    }
+
+    #[test]
+    fn sent_unit_cost_has_no_f32_rounding_overcharge() {
+        // Exact-formula pins under 1.4 escalation (base × 1.2^(w-1) × 1.4^n, ceil):
+        assert_eq!(sent_unit_cost(Shape::Circle, 2, 0), 60); // ceil(50 × 1.2)
+        assert_eq!(sent_unit_cost(Shape::Triangle, 4, 2), 68); // ceil(20 × 1.728 × 1.96)
+        assert_eq!(sent_unit_cost(Shape::Circle, 4, 1), 121); // ceil(50 × 1.728 × 1.4)
+        assert_eq!(sent_unit_cost(Shape::Circle, 4, 2), 170); // ceil(50 × 1.728 × 1.96)
+        assert_eq!(sent_unit_cost(Shape::Circle, 6, 3), 342); // ceil(50 × 2.48832 × 2.744)
+    }
+
+    #[test]
+    fn shape_index_is_stable() {
+        assert_eq!(shape_index(Shape::Square), 0);
+        assert_eq!(shape_index(Shape::Triangle), 1);
+        assert_eq!(shape_index(Shape::Circle), 2);
     }
 }

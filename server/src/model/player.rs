@@ -18,18 +18,30 @@ pub struct Player {
     pub spawning_queue: Vec<Shape>,
     /// Current king upgrade tier (0 = base, max 4).
     pub king_tier: u32,
+    /// Sends of each shape this wave (Square/Triangle/Circle); resets each wave.
+    pub sends_this_wave: [u32; 3],
+    /// Price of the NEXT send of each shape — server-computed so the client
+    /// displays exactly what will be charged.
+    pub next_send_costs: [u32; 3],
+    /// Number of creeps this player's board has leaked this wave; resets each wave.
+    pub leaks_this_wave: u32,
 }
 
 impl Player {
     pub fn new(id: i64, username: String, gold: u32) -> Self {
-        Self {
+        let mut player = Self {
             id,
             username,
             gold,
             income: 0,
             spawning_queue: Vec::new(),
             king_tier: 0,
-        }
+            sends_this_wave: [0; 3],
+            next_send_costs: [0; 3],
+            leaks_this_wave: 0,
+        };
+        player.refresh_send_costs(1);
+        player
     }
 
     pub fn can_afford(&self, amount: u32) -> bool {
@@ -47,6 +59,16 @@ impl Player {
 
     pub fn add_gold(&mut self, amount: u32) {
         self.gold += amount;
+    }
+
+    /// Recomputes `next_send_costs` from the current wave and counters.
+    pub fn refresh_send_costs(&mut self, wave: u32) {
+        use crate::model::shape::Shape;
+        use crate::model::unit_config::{sent_unit_cost, shape_index};
+        for shape in [Shape::Square, Shape::Triangle, Shape::Circle] {
+            let i = shape_index(shape);
+            self.next_send_costs[i] = sent_unit_cost(shape, wave, self.sends_this_wave[i]);
+        }
     }
 }
 
@@ -107,5 +129,25 @@ mod tests {
         // Failure case
         assert!(!player.try_spend_gold(1));
         assert_eq!(player.gold, 0);
+    }
+
+    // --- Task 1 TDD tests ---
+
+    #[test]
+    fn new_player_has_base_send_costs_and_zero_counters() {
+        let player = Player::new(1, "test".to_string(), 100);
+        assert_eq!(player.sends_this_wave, [0, 0, 0]);
+        assert_eq!(player.next_send_costs, [8, 20, 50]); // wave 1, n=0
+    }
+
+    #[test]
+    fn refresh_send_costs_uses_wave_and_counters() {
+        let mut player = Player::new(1, "test".to_string(), 100);
+        player.sends_this_wave = [1, 0, 0]; // one scout already sent
+        player.refresh_send_costs(1);
+        assert_eq!(player.next_send_costs, [12, 20, 50]); // ceil(8 × 1.4)
+        player.sends_this_wave = [0, 0, 0];
+        player.refresh_send_costs(2);
+        assert_eq!(player.next_send_costs[0], 10); // ceil(8 × 1.2)
     }
 }

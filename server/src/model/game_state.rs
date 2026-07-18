@@ -10,7 +10,6 @@ pub enum GamePhase {
     GameOver,
 }
 
-
 /// Per-tick delta time inserted into the World at the start of each game tick.
 #[derive(Debug, Resource)]
 pub struct DeltaTime(pub f32);
@@ -82,7 +81,6 @@ mod tests {
         );
         assert_eq!(*phase.unwrap(), GamePhase::Build);
     }
-
 
     #[test]
     fn test_delta_time_resource_can_be_inserted_and_read() {

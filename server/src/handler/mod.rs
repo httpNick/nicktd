@@ -5,6 +5,8 @@ pub mod in_game;
 pub mod king;
 pub mod matchmaking;
 pub mod pre_game;
+#[cfg(test)]
+mod sim_tests;
 pub mod spawn;
 pub mod wave;
 pub mod worker;

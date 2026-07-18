@@ -455,12 +455,7 @@ mod tests {
         lobby.broadcast_gamestate();
         let _ = rx.try_recv().unwrap();
 
-        lobby
-            .game_state
-            .world
-            .get_mut::<Position>(mover)
-            .unwrap()
-            .x = 250.0;
+        lobby.game_state.world.get_mut::<Position>(mover).unwrap().x = 250.0;
         lobby.broadcast_changes();
 
         let msg = rx.try_recv().unwrap();
@@ -559,8 +554,7 @@ mod tests {
 
         // Baseline snapshot both clients receive normally.
         lobby.broadcast_gamestate();
-        let baseline: serde_json::Value =
-            serde_json::from_str(&rx_a.try_recv().unwrap()).unwrap();
+        let baseline: serde_json::Value = serde_json::from_str(&rx_a.try_recv().unwrap()).unwrap();
         let _ = rx_b.try_recv().unwrap();
         let baseline_seq = baseline["data"]["seq"].as_u64().unwrap();
 

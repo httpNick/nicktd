@@ -25,12 +25,18 @@ pub struct PlaceMessage {
 #[serde(tag = "action", content = "payload", rename_all = "camelCase")]
 pub enum ClientMessage {
     Place(PlaceMessage),
-    SellById { entity_id: u64 },
+    SellById {
+        entity_id: u64,
+    },
     SkipToCombat,
     LeaveLobby,
     HireWorker {},
-    RequestUnitInfo { entity_id: u64 },
-    SendUnit { shape: Shape },
+    RequestUnitInfo {
+        entity_id: u64,
+    },
+    SendUnit {
+        shape: Shape,
+    },
     UpgradeKing {},
     /// Client detected a seq gap (missed a delta) and asks for a direct resync.
     RequestFullState,

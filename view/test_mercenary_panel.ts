@@ -4,7 +4,7 @@ import { MercenaryPanel, SENT_UNIT_PROFILES } from './mercenary_panel.js';
 
 // ---- Mock helpers ----
 
-type ButtonState = { unaffordable: boolean; _handler: (() => void) | null };
+type ButtonState = { unaffordable: boolean; _handler: (() => void) | null; costText: string };
 
 function makePanel() {
     // Persistent button state: survives multiple querySelectorAll calls so
@@ -22,10 +22,14 @@ function makePanel() {
             if (this.innerHTML !== lastParsedHtml) {
                 lastParsedHtml = this.innerHTML;
                 buttonState.clear();
-                for (const m of this.innerHTML.matchAll(/data-shape="(\w+)"([^>]*?)>/g)) {
-                    const shape = m[1];
+                // Each unit row: cost span appears before the data-shape button.
+                for (const m of this.innerHTML.matchAll(
+                    /<span class="merc-unit-cost">([^<]*)<\/span>[\s\S]*?data-shape="(\w+)"([^>]*?)>/g
+                )) {
+                    const costText = m[1];
+                    const shape = m[2];
                     const unaffordable = m[0].includes('data-unaffordable="true"');
-                    buttonState.set(shape, { unaffordable, _handler: null });
+                    buttonState.set(shape, { unaffordable, _handler: null, costText });
                 }
             }
             return [...buttonState.entries()].map(([shape, state]) => ({
@@ -43,6 +47,15 @@ function makePanel() {
                 addEventListener: (evt: string, fn: () => void) => {
                     if (evt === 'click') state._handler = fn;
                 },
+                parentElement: {
+                    querySelector: (s: string) => {
+                        if (s !== '.merc-unit-cost') return null;
+                        return {
+                            get textContent() { return state.costText; },
+                            set textContent(v: string) { state.costText = v; },
+                        };
+                    },
+                },
             }));
         },
         simulateSendClick(shape: string) {
@@ -50,6 +63,9 @@ function makePanel() {
         },
         isUnaffordable(shape: string) {
             return buttonState.get(shape)?.unaffordable ?? false;
+        },
+        costText(shape: string) {
+            return buttonState.get(shape)?.costText ?? null;
         },
     };
 
@@ -89,9 +105,9 @@ test('SENT_UNIT_PROFILES', async (t) => {
     await t.test('contains Square shape with correct stats', () => {
         const sq = SENT_UNIT_PROFILES.find(p => p.shape === 'Square');
         assert.ok(sq, 'Square profile missing');
-        assert.strictEqual(sq!.cost, 5);
+        assert.strictEqual(sq!.cost, 8);
         assert.strictEqual(sq!.income, 1);
-        assert.strictEqual(sq!.bounty, 2);
+        assert.strictEqual(sq!.bounty, 6);
         assert.ok(sq!.name.length > 0);
     });
 
@@ -99,16 +115,16 @@ test('SENT_UNIT_PROFILES', async (t) => {
         const tr = SENT_UNIT_PROFILES.find(p => p.shape === 'Triangle');
         assert.ok(tr, 'Triangle profile missing');
         assert.strictEqual(tr!.cost, 20);
-        assert.strictEqual(tr!.income, 3);
-        assert.strictEqual(tr!.bounty, 8);
+        assert.strictEqual(tr!.income, 2);
+        assert.strictEqual(tr!.bounty, 12);
     });
 
     await t.test('contains Circle shape with correct stats', () => {
         const ci = SENT_UNIT_PROFILES.find(p => p.shape === 'Circle');
         assert.ok(ci, 'Circle profile missing');
         assert.strictEqual(ci!.cost, 50);
-        assert.strictEqual(ci!.income, 7);
-        assert.strictEqual(ci!.bounty, 20);
+        assert.strictEqual(ci!.income, 4);
+        assert.strictEqual(ci!.bounty, 30);
     });
 
     await t.test('Square has highest income-per-gold ratio', () => {
@@ -267,8 +283,29 @@ test('MercenaryPanel', async (t) => {
         const { panel, unitListEl } = makePanel();
         panel.updateGold(20);
         assert.strictEqual(unitListEl.isUnaffordable('Circle'), true, 'Circle (50g) should be unaffordable with 20g');
-        assert.strictEqual(unitListEl.isUnaffordable('Square'), false, 'Square (5g) should be affordable with 20g');
+        assert.strictEqual(unitListEl.isUnaffordable('Square'), false, 'Square (8g) should be affordable with 20g');
         assert.strictEqual(unitListEl.isUnaffordable('Triangle'), false, 'Triangle (20g) should be affordable with 20g');
+    });
+
+    // --- updatePlayer: server-driven dynamic prices ---
+
+    await t.test('updatePlayer rewrites cost labels and affordability from server prices', () => {
+        const { panel, unitListEl } = makePanel();
+        panel.updatePlayer(10, [7, 29, 63]);
+        assert.strictEqual(unitListEl.costText('Square'), '7g');
+        assert.strictEqual(unitListEl.isUnaffordable('Square'), false, '10 >= 7 should be affordable');
+        assert.strictEqual(unitListEl.costText('Triangle'), '29g');
+        assert.strictEqual(unitListEl.isUnaffordable('Triangle'), true, '10 < 29 should be unaffordable');
+        assert.strictEqual(unitListEl.costText('Circle'), '63g');
+        assert.strictEqual(unitListEl.isUnaffordable('Circle'), true, '10 < 63 should be unaffordable');
+    });
+
+    await t.test('updatePlayer without nextSendCosts keeps previously known costs', () => {
+        const { panel, unitListEl } = makePanel();
+        panel.updatePlayer(100, [7, 29, 63]);
+        panel.updatePlayer(5); // gold-only update, e.g. via updateGold pathway
+        assert.strictEqual(unitListEl.costText('Square'), '7g', 'cost should persist from last server update');
+        assert.strictEqual(unitListEl.isUnaffordable('Square'), true, '5 < 7 should now be unaffordable');
     });
 });
 

@@ -44,8 +44,8 @@ pub fn try_sell_entity(
     player_id: i64,
     entity_id: u64,
 ) -> Option<u32> {
-    use bevy_ecs::prelude::Without;
     use crate::model::components::King as KingMarker;
+    use bevy_ecs::prelude::Without;
 
     let mut query = lobby.game_state.world.query_filtered::<(
         Entity,
@@ -149,12 +149,30 @@ pub fn handle_client_message(
             let Some(idx) = player_idx else {
                 return MessageOutcome::Ignored;
             };
+            let worker_count = {
+                let mut q = lobby
+                    .game_state
+                    .world
+                    .query::<(&Worker, &PlayerIdComponent)>();
+                q.iter(&lobby.game_state.world)
+                    .filter(|(_, owner)| owner.0 == player_id)
+                    .count()
+            };
+            if worker_count >= crate::handler::worker::WORKER_CAP {
+                return MessageOutcome::Reply(ServerMessage::Error(
+                    "Worker limit reached (max 7)".into(),
+                ));
+            }
             if lobby.players[idx].try_spend_gold(50) {
                 let targets = TargetPositions {
                     vein: crate::handler::worker::VEIN_POSITIONS[idx],
                     cart: crate::handler::worker::CART_POSITIONS[idx],
                 };
-                crate::handler::spawn::spawn_worker(&mut lobby.game_state.world, player_id, targets);
+                crate::handler::spawn::spawn_worker(
+                    &mut lobby.game_state.world,
+                    player_id,
+                    targets,
+                );
                 lobby.broadcast_changes();
                 MessageOutcome::Handled
             } else {
@@ -168,16 +186,25 @@ pub fn handle_client_message(
             let Some(idx) = player_idx else {
                 return MessageOutcome::Ignored;
             };
+            let wave = lobby.game_state.wave_number;
             let sent_profile = crate::model::unit_config::get_sent_unit_profile(shape);
-            if lobby.players[idx].try_spend_gold(sent_profile.send_cost) {
+            let i = crate::model::unit_config::shape_index(shape);
+            let cost = crate::model::unit_config::sent_unit_cost(
+                shape,
+                wave,
+                lobby.players[idx].sends_this_wave[i],
+            );
+            if lobby.players[idx].try_spend_gold(cost) {
                 lobby.players[idx].spawning_queue.push(shape);
                 lobby.players[idx].income += sent_profile.income;
+                lobby.players[idx].sends_this_wave[i] += 1;
+                lobby.players[idx].refresh_send_costs(wave);
                 lobby.broadcast_changes();
                 MessageOutcome::Handled
             } else {
                 MessageOutcome::Reply(ServerMessage::Error(format!(
                     "Insufficient gold for {} (cost: {})",
-                    sent_profile.name, sent_profile.send_cost
+                    sent_profile.name, cost
                 )))
             }
         }
@@ -208,7 +235,16 @@ pub fn handle_client_message(
                 .iter(&lobby.game_state.world)
                 .find(|(entity, ..)| entity.to_bits() == entity_id)
                 .map(
-                    |(_, attack_stats, attack_range, defense_stats, shape_comp, boss, owner, worker)| {
+                    |(
+                        _,
+                        attack_stats,
+                        attack_range,
+                        defense_stats,
+                        shape_comp,
+                        boss,
+                        owner,
+                        worker,
+                    )| {
                         (
                             attack_stats.map(|s| s.damage),
                             attack_stats.map(|s| s.rate),
@@ -851,11 +887,8 @@ mod tests {
             vein: crate::handler::worker::VEIN_POSITIONS[0],
             cart: crate::handler::worker::CART_POSITIONS[0],
         };
-        let worker = crate::handler::spawn::spawn_worker(
-            &mut lobby.game_state.world,
-            player_id,
-            targets,
-        );
+        let worker =
+            crate::handler::spawn::spawn_worker(&mut lobby.game_state.world, player_id, targets);
 
         let sold = try_sell_entity(&mut lobby, player_id, worker.to_bits());
 
@@ -1319,20 +1352,20 @@ mod tests {
         let square_profile = get_sent_unit_profile(Shape::Square);
         let triangle_profile = get_sent_unit_profile(Shape::Triangle);
 
-        // Buy a Square (costs 5, income 1)
+        // Buy a Square (costs 8, income 1)
         let idx = 0;
         if lobby.players[idx].try_spend_gold(square_profile.send_cost) {
             lobby.players[idx].spawning_queue.push(Shape::Square);
             lobby.players[idx].income += square_profile.income;
         }
-        // Buy a Triangle (costs 20, income 3)
+        // Buy a Triangle (costs 20, income 2)
         if lobby.players[idx].try_spend_gold(triangle_profile.send_cost) {
             lobby.players[idx].spawning_queue.push(Shape::Triangle);
             lobby.players[idx].income += triangle_profile.income;
         }
 
-        assert_eq!(lobby.players[0].gold, 200 - 5 - 20);
-        assert_eq!(lobby.players[0].income, 1 + 3);
+        assert_eq!(lobby.players[0].gold, 200 - 8 - 20);
+        assert_eq!(lobby.players[0].income, 1 + 2);
         assert_eq!(lobby.players[0].spawning_queue.len(), 2);
     }
 
@@ -1474,5 +1507,86 @@ mod tests {
             lobby.seq, seq_before,
             "handling RequestFullState must not bump the shared lobby seq"
         );
+    }
+
+    // --- Task 1 TDD tests ---
+
+    #[test]
+    fn send_unit_charges_escalating_price_and_bumps_counter() {
+        use crate::model::messages::ClientMessage;
+        let mut lobby = Lobby::new();
+        lobby.players.push(Player::new(1, "p1".into(), 100));
+        lobby.players.push(Player::new(2, "p2".into(), 100));
+
+        // Wave 1: scouts cost 8 then 12.
+        for expected_cost in [8u32, 12u32] {
+            let before = lobby.players[0].gold;
+            let outcome = handle_client_message(
+                &mut lobby,
+                1,
+                ClientMessage::SendUnit {
+                    shape: Shape::Square,
+                },
+            );
+            assert!(matches!(outcome, MessageOutcome::Handled));
+            assert_eq!(before - lobby.players[0].gold, expected_cost);
+        }
+        assert_eq!(lobby.players[0].sends_this_wave[0], 2);
+        assert_eq!(lobby.players[0].next_send_costs[0], 16); // third scout
+        assert_eq!(lobby.players[0].income, 2); // +1 per scout regardless of price
+    }
+
+    #[test]
+    fn send_unit_rejects_when_escalated_price_unaffordable() {
+        use crate::model::messages::ClientMessage;
+        let mut lobby = Lobby::new();
+        lobby.players.push(Player::new(1, "p1".into(), 15)); // affords 8, not the next 12
+        let ok = handle_client_message(
+            &mut lobby,
+            1,
+            ClientMessage::SendUnit {
+                shape: Shape::Square,
+            },
+        );
+        assert!(matches!(ok, MessageOutcome::Handled));
+        let rejected = handle_client_message(
+            &mut lobby,
+            1,
+            ClientMessage::SendUnit {
+                shape: Shape::Square,
+            },
+        );
+        assert!(matches!(rejected, MessageOutcome::Reply(_)));
+        assert_eq!(
+            lobby.players[0].sends_this_wave[0], 1,
+            "failed send must not bump counter"
+        );
+    }
+
+    #[test]
+    fn hire_worker_rejected_at_cap() {
+        use crate::model::messages::ClientMessage;
+        let mut lobby = Lobby::new();
+        lobby.players.push(Player::new(1, "p1".into(), 1000));
+        let targets = TargetPositions {
+            vein: crate::handler::worker::VEIN_POSITIONS[0],
+            cart: crate::handler::worker::CART_POSITIONS[0],
+        };
+        for _ in 0..crate::handler::worker::WORKER_CAP {
+            crate::handler::spawn::spawn_worker(&mut lobby.game_state.world, 1, targets);
+        }
+        let outcome = handle_client_message(&mut lobby, 1, ClientMessage::HireWorker {});
+        assert!(
+            matches!(outcome, MessageOutcome::Reply(_)),
+            "8th worker must be rejected"
+        );
+        assert_eq!(lobby.players[0].gold, 1000, "no gold charged on rejection");
+        let count = lobby
+            .game_state
+            .world
+            .query::<&Worker>()
+            .iter(&lobby.game_state.world)
+            .count();
+        assert_eq!(count, crate::handler::worker::WORKER_CAP);
     }
 }

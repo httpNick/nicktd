@@ -9,10 +9,13 @@ export interface SentUnitProfile {
 }
 
 export const SENT_UNIT_PROFILES: SentUnitProfile[] = [
-    { shape: 'Square', name: 'Scout', cost: 5, income: 1, bounty: 2 },
-    { shape: 'Triangle', name: 'Raider', cost: 20, income: 3, bounty: 8 },
-    { shape: 'Circle', name: 'Siege Mage', cost: 50, income: 7, bounty: 20 },
+    { shape: 'Square', name: 'Scout', cost: 8, income: 1, bounty: 6 },
+    { shape: 'Triangle', name: 'Raider', cost: 20, income: 2, bounty: 12 },
+    { shape: 'Circle', name: 'Siege Mage', cost: 50, income: 4, bounty: 30 },
 ];
+
+/** Server order for next_send_costs: Square, Triangle, Circle. */
+const SHAPE_INDEX: Record<Shape, number> = { Square: 0, Triangle: 1, Circle: 2 };
 
 export interface MercenaryPanelCallbacks {
     onSend: (shape: Shape) => void;
@@ -23,6 +26,7 @@ export class MercenaryPanel {
     private callbacks: MercenaryPanelCallbacks;
     private unitListEl: HTMLElement | null;
     private _currentGold: number = 0;
+    private _currentCosts: number[] = SENT_UNIT_PROFILES.map(p => p.cost);
 
     constructor(containerElement: HTMLElement, callbacks: MercenaryPanelCallbacks) {
         this.container = containerElement;
@@ -48,19 +52,28 @@ export class MercenaryPanel {
 
     get isVisible(): boolean { return this.container.style.display !== 'none'; }
 
-    updateGold(gold: number): void {
+    /** Update gold and the server-computed escalating prices together. */
+    updatePlayer(gold: number, nextSendCosts?: number[]): void {
         this._currentGold = gold;
+        if (nextSendCosts && nextSendCosts.length === 3) {
+            this._currentCosts = nextSendCosts;
+        }
         if (!this.unitListEl) return;
         this.unitListEl.querySelectorAll<HTMLButtonElement>('[data-shape]').forEach(btn => {
             const shape = btn.getAttribute('data-shape') as Shape;
-            const profile = SENT_UNIT_PROFILES.find(p => p.shape === shape);
-            if (!profile) return;
-            if (gold >= profile.cost) {
+            const cost = this._currentCosts[SHAPE_INDEX[shape]];
+            const costEl = btn.parentElement?.querySelector<HTMLElement>('.merc-unit-cost');
+            if (costEl) costEl.textContent = `${cost}g`;
+            if (gold >= cost) {
                 btn.removeAttribute('data-unaffordable');
             } else {
                 btn.setAttribute('data-unaffordable', 'true');
             }
         });
+    }
+
+    updateGold(gold: number): void {
+        this.updatePlayer(gold);
     }
 
     private _renderUnits(): void {

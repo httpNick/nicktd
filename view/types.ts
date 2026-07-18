@@ -21,6 +21,7 @@ export interface Player {
     income: number;
     king_tier: number;
     spawning_queue: ('Square' | 'Circle' | 'Triangle')[];
+    next_send_costs: number[];
 }
 
 export interface Position {

@@ -170,187 +170,193 @@ pub async fn run_game_loop(server_state: ServerState, match_id: u64) {
         }
         let mut lobby_guard = lobby_arc.lock().await;
         let lobby = &mut *lobby_guard;
-        {
-            // Insert per-tick resources.
-            lobby
+        run_tick(lobby, &mut schedule, tick_delta);
+    }
+}
+
+/// One synchronous game tick. Extracted from the async loop so tests can
+/// drive full games deterministically without tokio or networking.
+pub fn run_tick(lobby: &mut crate::model::lobby::Lobby, schedule: &mut Schedule, tick_delta: f32) {
+    // Insert per-tick resources.
+    lobby
+        .game_state
+        .world
+        .insert_resource(DeltaTime(tick_delta));
+    lobby
+        .game_state
+        .world
+        .insert_resource(lobby.game_state.phase);
+
+    // Build phase orchestration: spawn workers and tick the phase timer.
+    if lobby.game_state.phase == GamePhase::Build {
+        if lobby.is_full() {
+            let mut worker_query = lobby
                 .game_state
                 .world
-                .insert_resource(DeltaTime(tick_delta));
-            lobby
-                .game_state
-                .world
-                .insert_resource(lobby.game_state.phase);
-
-            // Build phase orchestration: spawn workers and tick the phase timer.
-            if lobby.game_state.phase == GamePhase::Build {
-                if lobby.is_full() {
-                    let mut worker_query = lobby
-                        .game_state
-                        .world
-                        .query::<&crate::model::components::Worker>();
-                    if worker_query.iter(&lobby.game_state.world).count() == 0 {
-                        for (idx, player) in lobby.players.iter().enumerate() {
-                            for _ in 0..3 {
-                                let targets = crate::model::components::TargetPositions {
-                                    vein: crate::handler::worker::VEIN_POSITIONS[idx],
-                                    cart: crate::handler::worker::CART_POSITIONS[idx],
-                                };
-                                crate::handler::spawn::spawn_worker(
-                                    &mut lobby.game_state.world,
-                                    player.id,
-                                    targets,
-                                );
-                            }
-                        }
-
-                        // Spawn kings once (when workers first appear = game start).
-                        let king_count = lobby
-                            .game_state
-                            .world
-                            .query::<&King>()
-                            .iter(&lobby.game_state.world)
-                            .count();
-                        if king_count == 0 {
-                            for (idx, player) in lobby.players.iter().enumerate() {
-                                crate::handler::spawn::spawn_king(
-                                    &mut lobby.game_state.world,
-                                    player.id,
-                                    idx,
-                                );
-                            }
-                        }
+                .query::<&crate::model::components::Worker>();
+            if worker_query.iter(&lobby.game_state.world).count() == 0 {
+                for (idx, player) in lobby.players.iter().enumerate() {
+                    for _ in 0..3 {
+                        let targets = crate::model::components::TargetPositions {
+                            vein: crate::handler::worker::VEIN_POSITIONS[idx],
+                            cart: crate::handler::worker::CART_POSITIONS[idx],
+                        };
+                        crate::handler::spawn::spawn_worker(
+                            &mut lobby.game_state.world,
+                            player.id,
+                            targets,
+                        );
                     }
+                }
 
-                    lobby.game_state.phase_timer -= tick_delta;
-                    if lobby.game_state.phase_timer <= 0.0 {
-                        lobby.game_state.phase_timer = 0.0;
-                        lobby.game_state.phase = GamePhase::Combat;
-                        // Sync the updated phase into the world immediately so combat
-                        // systems run on this same tick.
-                        lobby
-                            .game_state
-                            .world
-                            .insert_resource(lobby.game_state.phase);
-
-                        use crate::model::constants::{BOARD_SIZE, RIGHT_BOARD_START};
-                        let spawn_x_left = BOARD_SIZE / 2.0;
-                        let spawn_x_right = RIGHT_BOARD_START + (BOARD_SIZE / 2.0);
-
-                        let wave_config =
-                            crate::handler::wave::get_wave_config(lobby.game_state.wave_number);
-                        for x in [spawn_x_left, spawn_x_right] {
-                            for shape in &wave_config.enemies {
-                                crate::handler::spawn::spawn_enemy(
-                                    &mut lobby.game_state.world,
-                                    Position { x, y: 30.0 },
-                                    *shape,
-                                    lobby.game_state.wave_number,
-                                );
-                            }
-                        }
-
-                        // Drain each player's spawning queue and send their units to the
-                        // opponent's board.
-                        let queues: Vec<Vec<crate::model::shape::Shape>> = lobby
-                            .players
-                            .iter()
-                            .map(|p| p.spawning_queue.clone())
-                            .collect();
-                        for (player_idx, queue) in queues.iter().enumerate() {
-                            let opponent_x = if player_idx == 0 {
-                                spawn_x_right
-                            } else {
-                                spawn_x_left
-                            };
-                            for &shape in queue {
-                                let sent_profile =
-                                    crate::model::unit_config::get_sent_unit_profile(shape);
-                                crate::handler::spawn::spawn_sent_enemy(
-                                    &mut lobby.game_state.world,
-                                    Position {
-                                        x: opponent_x,
-                                        y: 30.0,
-                                    },
-                                    shape,
-                                    lobby.game_state.wave_number,
-                                    sent_profile.bounty,
-                                );
-                            }
-                        }
-                        for player in &mut lobby.players {
-                            player.spawning_queue.clear();
-                        }
+                // Spawn kings once (when workers first appear = game start).
+                let king_count = lobby
+                    .game_state
+                    .world
+                    .query::<&King>()
+                    .iter(&lobby.game_state.world)
+                    .count();
+                if king_count == 0 {
+                    for (idx, player) in lobby.players.iter().enumerate() {
+                        crate::handler::spawn::spawn_king(
+                            &mut lobby.game_state.world,
+                            player.id,
+                            idx,
+                        );
                     }
                 }
             }
 
-            // Sync Players resource, run the main schedule, then sync back.
-            lobby
-                .game_state
-                .world
-                .insert_resource(Players(lobby.players.clone()));
-            // Halt the ECS schedule when game is over to stop all simulation.
-            if lobby.game_state.phase != GamePhase::GameOver {
-                schedule.run(&mut lobby.game_state.world);
-            }
-            lobby.players = lobby.game_state.world.resource::<Players>().0.clone();
+            lobby.game_state.phase_timer -= tick_delta;
+            if lobby.game_state.phase_timer <= 0.0 {
+                lobby.game_state.phase_timer = 0.0;
+                lobby.game_state.phase = GamePhase::Combat;
+                // Sync the updated phase into the world immediately so combat
+                // systems run on this same tick.
+                lobby
+                    .game_state
+                    .world
+                    .insert_resource(lobby.game_state.phase);
 
-            // King death check: if any king's HP reaches 0, trigger GameOver.
-            if lobby.game_state.phase == GamePhase::Combat {
-                let dead_king_player_ids: Vec<i64> = {
-                    let mut query = lobby
-                        .game_state
-                        .world
-                        .query::<(&King, &PlayerIdComponent, &Health)>();
-                    query
-                        .iter(&lobby.game_state.world)
-                        .filter(|(_, _, health)| health.current <= 0.0)
-                        .map(|(_, pid, _)| pid.0)
-                        .collect()
-                };
-                if !dead_king_player_ids.is_empty() {
-                    lobby.game_state.phase = GamePhase::GameOver;
-                    lobby.game_state.world.insert_resource(GamePhase::GameOver);
-                    // Determine winner: if exactly one king died, the other player wins.
-                    if dead_king_player_ids.len() == 1 {
-                        let loser_id = dead_king_player_ids[0];
-                        lobby.winner_id = lobby
-                            .players
-                            .iter()
-                            .find(|p| p.id != loser_id)
-                            .map(|p| p.id);
+                use crate::model::constants::{BOARD_SIZE, RIGHT_BOARD_START};
+                let spawn_x_left = BOARD_SIZE / 2.0;
+                let spawn_x_right = RIGHT_BOARD_START + (BOARD_SIZE / 2.0);
+
+                let wave_config =
+                    crate::handler::wave::get_wave_config(lobby.game_state.wave_number);
+                for x in [spawn_x_left, spawn_x_right] {
+                    let slot_count = wave_config.enemies.len();
+                    for (slot, shape) in wave_config.enemies.iter().enumerate() {
+                        // Deterministic per-slot offset, identical per board slot, so
+                        // mirrored boards spawn creeps with the same relative spread.
+                        // This avoids the exact-overlap collision tiebreaker
+                        // (combat.rs) whose scatter angle is derived from the global
+                        // entity index and is therefore not mirror-symmetric across
+                        // boards.
+                        let offset = (slot as f32) * 12.0 - (slot_count as f32 - 1.0) * 6.0;
+                        crate::handler::spawn::spawn_enemy(
+                            &mut lobby.game_state.world,
+                            Position { x: x + offset, y: 30.0 },
+                            *shape,
+                            lobby.game_state.wave_number,
+                        );
+                    }
+                }
+
+                // Drain each player's spawning queue and send their units to the
+                // opponent's board.
+                let queues: Vec<Vec<crate::model::shape::Shape>> = lobby
+                    .players
+                    .iter()
+                    .map(|p| p.spawning_queue.clone())
+                    .collect();
+                for (player_idx, queue) in queues.iter().enumerate() {
+                    let opponent_x = if player_idx == 0 {
+                        spawn_x_right
                     } else {
-                        // Both kings died simultaneously — draw.
-                        lobby.winner_id = None;
+                        spawn_x_left
+                    };
+                    let queue_len = queue.len();
+                    for (slot, &shape) in queue.iter().enumerate() {
+                        // Same deterministic per-slot offset idea as wave spawns
+                        // above, so sent units co-located at the opponent's spawn
+                        // x don't trigger the global-index-dependent scatter
+                        // tiebreaker asymmetrically between boards.
+                        let offset = (slot as f32) * 12.0 - (queue_len as f32 - 1.0) * 6.0;
+                        let sent_profile = crate::model::unit_config::get_sent_unit_profile(shape);
+                        crate::handler::spawn::spawn_sent_enemy(
+                            &mut lobby.game_state.world,
+                            Position {
+                                x: opponent_x + offset,
+                                y: 30.0,
+                            },
+                            shape,
+                            lobby.game_state.wave_number,
+                            sent_profile.bounty,
+                        );
                     }
                 }
-            }
-
-            // Wave completion: transition out of Combat when all enemies are gone.
-            if lobby.game_state.phase == GamePhase::Combat
-                && check_wave_cleared(&mut lobby.game_state.world)
-            {
-                if lobby.game_state.wave_number >= 6 {
-                    lobby.game_state.phase = GamePhase::Victory;
-                } else {
-                    lobby.game_state.phase = GamePhase::Build;
-                    lobby.game_state.wave_number += 1;
-                    lobby.game_state.phase_timer = 30.0;
-
-                    // Award wave completion bonus and permanent income.
-                    for player in &mut lobby.players {
-                        player.gold += 50;
-                        player.gold += player.income;
-                    }
-
-                    // Regen king HP at end of each wave.
-                    apply_king_regen(&mut lobby.game_state.world);
+                for player in &mut lobby.players {
+                    player.spawning_queue.clear();
                 }
             }
-
-            lobby.broadcast_changes();
         }
     }
+
+    // Sync Players resource, run the main schedule, then sync back.
+    lobby
+        .game_state
+        .world
+        .insert_resource(Players(lobby.players.clone()));
+    // Halt the ECS schedule when game is over to stop all simulation.
+    if lobby.game_state.phase != GamePhase::GameOver {
+        schedule.run(&mut lobby.game_state.world);
+    }
+    lobby.players = lobby.game_state.world.resource::<Players>().0.clone();
+
+    // King death check: if any king's HP reaches 0, trigger GameOver.
+    if lobby.game_state.phase == GamePhase::Combat {
+        let dead_king_player_ids: Vec<i64> = {
+            let mut query = lobby
+                .game_state
+                .world
+                .query::<(&King, &PlayerIdComponent, &Health)>();
+            query
+                .iter(&lobby.game_state.world)
+                .filter(|(_, _, health)| health.current <= 0.0)
+                .map(|(_, pid, _)| pid.0)
+                .collect()
+        };
+        if !dead_king_player_ids.is_empty() {
+            lobby.game_state.phase = GamePhase::GameOver;
+            lobby.game_state.world.insert_resource(GamePhase::GameOver);
+            // Determine winner: if exactly one king died, the other player wins.
+            if dead_king_player_ids.len() == 1 {
+                let loser_id = dead_king_player_ids[0];
+                lobby.winner_id = lobby
+                    .players
+                    .iter()
+                    .find(|p| p.id != loser_id)
+                    .map(|p| p.id);
+            } else {
+                // Both kings died simultaneously — draw.
+                lobby.winner_id = None;
+            }
+        }
+    }
+
+    // Wave completion: transition out of Combat when all enemies are gone.
+    if lobby.game_state.phase == GamePhase::Combat
+        && check_wave_cleared(&mut lobby.game_state.world)
+    {
+        if lobby.game_state.wave_number >= crate::handler::wave::FINAL_WAVE {
+            lobby.game_state.phase = GamePhase::Victory;
+        } else {
+            award_wave_end(lobby);
+        }
+    }
+
+    lobby.broadcast_changes();
 }
 
 pub fn check_wave_cleared(world: &mut bevy_ecs::prelude::World) -> bool {
@@ -358,6 +364,37 @@ pub fn check_wave_cleared(world: &mut bevy_ecs::prelude::World) -> bool {
     // The game should remain in Combat phase until king combat finishes.
     let mut query = world.query::<&crate::model::components::Enemy>();
     query.iter(world).count() == 0
+}
+
+/// Base wave-clear reward, before per-wave scaling.
+pub const WAVE_REWARD_BASE: u32 = 30;
+/// Additional reward per completed wave number.
+pub const WAVE_REWARD_PER_WAVE: u32 = 3;
+/// Bonus gold awarded when a player leaked zero creeps during the wave.
+pub const PERFECT_CLEAR_BONUS: u32 = 20;
+
+/// Applies end-of-wave transitions and economy: phase → Build, wave += 1,
+/// scaled reward + income + perfect-clear bonus, per-wave counter resets,
+/// king regen. Called when the wave is cleared and the game continues.
+pub fn award_wave_end(lobby: &mut crate::model::lobby::Lobby) {
+    let completed_wave = lobby.game_state.wave_number;
+    lobby.game_state.phase = GamePhase::Build;
+    lobby.game_state.wave_number += 1;
+    lobby.game_state.phase_timer = 30.0;
+    let new_wave = lobby.game_state.wave_number;
+
+    for player in &mut lobby.players {
+        player.gold += WAVE_REWARD_BASE + WAVE_REWARD_PER_WAVE * completed_wave;
+        player.gold += player.income;
+        if player.leaks_this_wave == 0 {
+            player.gold += PERFECT_CLEAR_BONUS;
+        }
+        player.leaks_this_wave = 0;
+        player.sends_this_wave = [0; 3];
+        player.refresh_send_costs(new_wave);
+    }
+
+    apply_king_regen(&mut lobby.game_state.world);
 }
 
 #[cfg(test)]
@@ -574,16 +611,10 @@ mod tests {
         if lobby.game_state.phase == GamePhase::Combat
             && check_wave_cleared(&mut lobby.game_state.world)
         {
-            if lobby.game_state.wave_number >= 6 {
+            if lobby.game_state.wave_number >= crate::handler::wave::FINAL_WAVE {
                 lobby.game_state.phase = GamePhase::Victory;
             } else {
-                lobby.game_state.phase = GamePhase::Build;
-                lobby.game_state.wave_number += 1;
-                lobby.game_state.phase_timer = 30.0;
-
-                for player in &mut lobby.players {
-                    player.gold += 50;
-                }
+                award_wave_end(&mut lobby);
             }
         }
         // --- SIMULATED TICK END ---
@@ -591,21 +622,57 @@ mod tests {
         assert_eq!(lobby.game_state.phase, GamePhase::Build);
         assert_eq!(lobby.game_state.wave_number, 2);
         assert_eq!(lobby.game_state.phase_timer, 30.0);
-        assert_eq!(lobby.players[0].gold, 150);
+        // wave 1 clean clear, 0 income = (30 + 3×1) + 20 perfect = 53
+        assert_eq!(lobby.players[0].gold, 153);
+    }
+
+    #[test]
+    fn wave_end_reward_scales_and_pays_perfect_bonus() {
+        let mut lobby = Lobby::new();
+        lobby.game_state.phase = GamePhase::Combat;
+        lobby.game_state.wave_number = 4;
+        lobby.players.push(Player::new(1, "clean".into(), 0));
+        lobby.players.push(Player::new(2, "leaky".into(), 0));
+        lobby.players[0].income = 5;
+        lobby.players[1].leaks_this_wave = 3;
+
+        award_wave_end(&mut lobby); // extracted helper under test
+
+        // clean: (30 + 3×4) + 5 income + 20 perfect = 67
+        assert_eq!(lobby.players[0].gold, 67);
+        // leaky: 42 + 0 income, no bonus
+        assert_eq!(lobby.players[1].gold, 42);
+        // counters reset for the new wave
+        assert_eq!(lobby.players[1].leaks_this_wave, 0);
+        assert_eq!(lobby.players[0].sends_this_wave, [0, 0, 0]);
+    }
+
+    #[test]
+    fn wave_end_reset_recomputes_send_costs_for_new_wave() {
+        let mut lobby = Lobby::new();
+        lobby.game_state.phase = GamePhase::Combat;
+        lobby.game_state.wave_number = 1;
+        lobby.players.push(Player::new(1, "p".into(), 0));
+        lobby.players[0].sends_this_wave = [3, 0, 0];
+
+        award_wave_end(&mut lobby); // wave_number becomes 2 inside
+
+        // n reset to 0, wave 2: ceil(8 × 1.2) = 10
+        assert_eq!(lobby.players[0].next_send_costs[0], 10);
     }
 
     #[test]
     fn test_victory_condition() {
         let mut lobby = Lobby::new();
         lobby.game_state.phase = GamePhase::Combat;
-        lobby.game_state.wave_number = 6;
+        lobby.game_state.wave_number = 12;
 
-        // Simulate combat ending on wave 6
+        // Simulate combat ending on wave 12
         // --- SIMULATED TICK START ---
         if lobby.game_state.phase == GamePhase::Combat
             && check_wave_cleared(&mut lobby.game_state.world)
         {
-            if lobby.game_state.wave_number >= 6 {
+            if lobby.game_state.wave_number >= crate::handler::wave::FINAL_WAVE {
                 lobby.game_state.phase = GamePhase::Victory;
             } else {
                 lobby.game_state.phase = GamePhase::Build;
@@ -616,6 +683,24 @@ mod tests {
         // --- SIMULATED TICK END ---
 
         assert_eq!(lobby.game_state.phase, GamePhase::Victory);
+
+        // Also verify that clearing wave 6 does NOT trigger victory
+        let mut lobby2 = Lobby::new();
+        lobby2.game_state.phase = GamePhase::Combat;
+        lobby2.game_state.wave_number = 6;
+
+        if lobby2.game_state.phase == GamePhase::Combat
+            && check_wave_cleared(&mut lobby2.game_state.world)
+        {
+            if lobby2.game_state.wave_number >= crate::handler::wave::FINAL_WAVE {
+                lobby2.game_state.phase = GamePhase::Victory;
+            } else {
+                award_wave_end(&mut lobby2);
+            }
+        }
+
+        assert_eq!(lobby2.game_state.phase, GamePhase::Build);
+        assert_eq!(lobby2.game_state.wave_number, 7);
     }
 
     #[test]
@@ -664,34 +749,42 @@ mod tests {
         if lobby.game_state.phase == GamePhase::Combat
             && check_wave_cleared(&mut lobby.game_state.world)
         {
-            if lobby.game_state.wave_number >= 6 {
+            if lobby.game_state.wave_number >= crate::handler::wave::FINAL_WAVE {
                 lobby.game_state.phase = GamePhase::Victory;
             } else {
-                lobby.game_state.phase = GamePhase::Build;
-                lobby.game_state.wave_number += 1;
-                lobby.game_state.phase_timer = 30.0;
-                for player in &mut lobby.players {
-                    player.gold += 50;
-                }
+                award_wave_end(&mut lobby);
             }
         }
         assert_eq!(lobby.game_state.phase, GamePhase::Build);
         assert_eq!(lobby.game_state.wave_number, 2);
-        assert_eq!(lobby.players[0].gold, 150);
+        // wave 1 clean clear, 0 income = (30 + 3×1) + 20 perfect = 53
+        assert_eq!(lobby.players[0].gold, 153);
 
-        // Jump to Wave 6 Combat
-        lobby.game_state.wave_number = 6;
+        // Jump to Wave 12 Combat
+        lobby.game_state.wave_number = 12;
         lobby.game_state.phase = GamePhase::Combat;
-        // Spawn boss
+        // Spawn boss and escorts
         crate::handler::spawn::spawn_enemy(
             &mut lobby.game_state.world,
             Position { x: 300.0, y: 30.0 },
             Shape::Circle,
-            6,
+            12,
+        );
+        crate::handler::spawn::spawn_enemy(
+            &mut lobby.game_state.world,
+            Position { x: 340.0, y: 30.0 },
+            Shape::Triangle,
+            12,
+        );
+        crate::handler::spawn::spawn_enemy(
+            &mut lobby.game_state.world,
+            Position { x: 380.0, y: 30.0 },
+            Shape::Triangle,
+            12,
         );
         assert!(!check_wave_cleared(&mut lobby.game_state.world));
 
-        // Clear Boss
+        // Clear all enemies
         let mut enemies = lobby
             .game_state
             .world
@@ -706,7 +799,7 @@ mod tests {
         if lobby.game_state.phase == GamePhase::Combat
             && check_wave_cleared(&mut lobby.game_state.world)
         {
-            if lobby.game_state.wave_number >= 6 {
+            if lobby.game_state.wave_number >= crate::handler::wave::FINAL_WAVE {
                 lobby.game_state.phase = GamePhase::Victory;
             } else {
                 lobby.game_state.phase = GamePhase::Build;
@@ -1133,23 +1226,18 @@ mod tests {
             "Income should accumulate across purchases"
         );
 
-        // Wave ends — award base bonus + accumulated income
+        // Wave ends — award scaled base bonus + accumulated income + perfect-clear bonus
         if lobby.game_state.phase == GamePhase::Combat
             && check_wave_cleared(&mut lobby.game_state.world)
         {
             if lobby.game_state.wave_number < 6 {
-                lobby.game_state.phase = GamePhase::Build;
-                lobby.game_state.wave_number += 1;
-                lobby.game_state.phase_timer = 30.0;
-                for player in &mut lobby.players {
-                    player.gold += 50;
-                    player.gold += player.income;
-                }
+                award_wave_end(&mut lobby);
             }
         }
 
+        // wave 1 clean clear = (30 + 3×1) + 20 perfect = 53
         let expected =
-            200 - sq.send_cost - tr.send_cost + 50 + SENT_SQUARE_INCOME + SENT_TRIANGLE_INCOME;
+            200 - sq.send_cost - tr.send_cost + 53 + SENT_SQUARE_INCOME + SENT_TRIANGLE_INCOME;
         assert_eq!(
             lobby.players[0].gold, expected,
             "Gold should include base wave bonus plus accumulated income"
@@ -1237,26 +1325,21 @@ mod tests {
         if lobby.game_state.phase == GamePhase::Combat
             && check_wave_cleared(&mut lobby.game_state.world)
         {
-            if lobby.game_state.wave_number >= 6 {
+            if lobby.game_state.wave_number >= crate::handler::wave::FINAL_WAVE {
                 lobby.game_state.phase = GamePhase::Victory;
             } else {
-                lobby.game_state.phase = GamePhase::Build;
-                lobby.game_state.wave_number += 1;
-                lobby.game_state.phase_timer = 30.0;
-                for player in &mut lobby.players {
-                    player.gold += 50;
-                    player.gold += player.income;
-                }
+                award_wave_end(&mut lobby);
             }
         }
 
+        // wave 1 clean clear base = (30 + 3×1) + 20 perfect = 53
         assert_eq!(
-            lobby.players[0].gold, 155,
-            "Player 1 should receive 50 base + 5 income = 155 total"
+            lobby.players[0].gold, 158,
+            "Player 1 should receive 53 base+bonus + 5 income = 158 total"
         );
         assert_eq!(
-            lobby.players[1].gold, 153,
-            "Player 2 should receive 50 base + 3 income = 153 total"
+            lobby.players[1].gold, 156,
+            "Player 2 should receive 53 base+bonus + 3 income = 156 total"
         );
     }
 
@@ -1272,19 +1355,14 @@ mod tests {
             && check_wave_cleared(&mut lobby.game_state.world)
         {
             if lobby.game_state.wave_number < 6 {
-                lobby.game_state.phase = GamePhase::Build;
-                lobby.game_state.wave_number += 1;
-                lobby.game_state.phase_timer = 30.0;
-                for player in &mut lobby.players {
-                    player.gold += 50;
-                    player.gold += player.income;
-                }
+                award_wave_end(&mut lobby);
             }
         }
 
+        // wave 1 clean clear, 0 income = (30 + 3×1) + 20 perfect = 53
         assert_eq!(
-            lobby.players[0].gold, 150,
-            "Player with 0 income should only receive 50 base wave bonus"
+            lobby.players[0].gold, 153,
+            "Player with 0 income should receive base wave bonus + perfect-clear bonus"
         );
     }
 
