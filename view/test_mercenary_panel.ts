@@ -1,6 +1,16 @@
 import assert from 'node:assert';
 import test from 'node:test';
-import { MercenaryPanel, SENT_UNIT_PROFILES } from './mercenary_panel.js';
+import { MercenaryPanel } from './mercenary_panel.js';
+import { SendUnitCatalogEntry } from './types.js';
+
+// ---- Fixtures ----
+
+/** Matches the real server catalog values (see server unit_config.rs). */
+const CATALOG: SendUnitCatalogEntry[] = [
+    { shape: 'Square', name: 'Scout', base_cost: 8, income: 1, bounty: 6 },
+    { shape: 'Triangle', name: 'Raider', base_cost: 20, income: 2, bounty: 12 },
+    { shape: 'Circle', name: 'Siege Mage', base_cost: 50, income: 4, bounty: 30 },
+];
 
 // ---- Mock helpers ----
 
@@ -11,6 +21,7 @@ function makePanel() {
     // handlers registered by _renderUnits are still present when updateGold
     // calls querySelectorAll to update affordability attributes.
     const buttonState = new Map<string, ButtonState>();
+    const shapeOrder: string[] = [];
     let lastParsedHtml = '';
 
     const unitListEl = {
@@ -22,6 +33,7 @@ function makePanel() {
             if (this.innerHTML !== lastParsedHtml) {
                 lastParsedHtml = this.innerHTML;
                 buttonState.clear();
+                shapeOrder.length = 0;
                 // Each unit row: cost span appears before the data-shape button.
                 for (const m of this.innerHTML.matchAll(
                     /<span class="merc-unit-cost">([^<]*)<\/span>[\s\S]*?data-shape="(\w+)"([^>]*?)>/g
@@ -30,33 +42,37 @@ function makePanel() {
                     const shape = m[2];
                     const unaffordable = m[0].includes('data-unaffordable="true"');
                     buttonState.set(shape, { unaffordable, _handler: null, costText });
+                    shapeOrder.push(shape);
                 }
             }
-            return [...buttonState.entries()].map(([shape, state]) => ({
-                getAttribute: (a: string) => {
-                    if (a === 'data-shape') return shape;
-                    if (a === 'data-unaffordable') return state.unaffordable ? 'true' : null;
-                    return null;
-                },
-                setAttribute: (a: string, v: string) => {
-                    if (a === 'data-unaffordable') state.unaffordable = v === 'true';
-                },
-                removeAttribute: (a: string) => {
-                    if (a === 'data-unaffordable') state.unaffordable = false;
-                },
-                addEventListener: (evt: string, fn: () => void) => {
-                    if (evt === 'click') state._handler = fn;
-                },
-                parentElement: {
-                    querySelector: (s: string) => {
-                        if (s !== '.merc-unit-cost') return null;
-                        return {
-                            get textContent() { return state.costText; },
-                            set textContent(v: string) { state.costText = v; },
-                        };
+            return shapeOrder.map((shape) => {
+                const state = buttonState.get(shape)!;
+                return {
+                    getAttribute: (a: string) => {
+                        if (a === 'data-shape') return shape;
+                        if (a === 'data-unaffordable') return state.unaffordable ? 'true' : null;
+                        return null;
                     },
-                },
-            }));
+                    setAttribute: (a: string, v: string) => {
+                        if (a === 'data-unaffordable') state.unaffordable = v === 'true';
+                    },
+                    removeAttribute: (a: string) => {
+                        if (a === 'data-unaffordable') state.unaffordable = false;
+                    },
+                    addEventListener: (evt: string, fn: () => void) => {
+                        if (evt === 'click') state._handler = fn;
+                    },
+                    parentElement: {
+                        querySelector: (s: string) => {
+                            if (s !== '.merc-unit-cost') return null;
+                            return {
+                                get textContent() { return state.costText; },
+                                set textContent(v: string) { state.costText = v; },
+                            };
+                        },
+                    },
+                };
+            });
         },
         simulateSendClick(shape: string) {
             buttonState.get(shape)?._handler?.();
@@ -96,52 +112,6 @@ function makePanel() {
 }
 
 // ---- Tests ----
-
-test('SENT_UNIT_PROFILES', async (t) => {
-    await t.test('contains three unit types', () => {
-        assert.strictEqual(SENT_UNIT_PROFILES.length, 3);
-    });
-
-    await t.test('contains Square shape with correct stats', () => {
-        const sq = SENT_UNIT_PROFILES.find(p => p.shape === 'Square');
-        assert.ok(sq, 'Square profile missing');
-        assert.strictEqual(sq!.cost, 8);
-        assert.strictEqual(sq!.income, 1);
-        assert.strictEqual(sq!.bounty, 6);
-        assert.ok(sq!.name.length > 0);
-    });
-
-    await t.test('contains Triangle shape with correct stats', () => {
-        const tr = SENT_UNIT_PROFILES.find(p => p.shape === 'Triangle');
-        assert.ok(tr, 'Triangle profile missing');
-        assert.strictEqual(tr!.cost, 20);
-        assert.strictEqual(tr!.income, 2);
-        assert.strictEqual(tr!.bounty, 12);
-    });
-
-    await t.test('contains Circle shape with correct stats', () => {
-        const ci = SENT_UNIT_PROFILES.find(p => p.shape === 'Circle');
-        assert.ok(ci, 'Circle profile missing');
-        assert.strictEqual(ci!.cost, 50);
-        assert.strictEqual(ci!.income, 4);
-        assert.strictEqual(ci!.bounty, 30);
-    });
-
-    await t.test('Square has highest income-per-gold ratio', () => {
-        const [sq, tr, ci] = ['Square', 'Triangle', 'Circle'].map(
-            s => SENT_UNIT_PROFILES.find(p => p.shape === s)!
-        );
-        const sqRatio = sq.income / sq.cost;
-        assert.ok(sqRatio >= tr.income / tr.cost);
-        assert.ok(sqRatio >= ci.income / ci.cost);
-    });
-
-    await t.test('all unit names are unique and non-empty', () => {
-        const names = SENT_UNIT_PROFILES.map(p => p.name);
-        assert.strictEqual(new Set(names).size, names.length);
-        names.forEach(n => assert.ok(n.length > 0));
-    });
-});
 
 test('MercenaryPanel', async (t) => {
 
@@ -197,36 +167,46 @@ test('MercenaryPanel', async (t) => {
         assert.strictEqual(container.style.display, 'none');
     });
 
-    // --- Unit list rendering ---
+    // --- Empty state before catalog arrives ---
 
-    await t.test('unit list HTML contains all three unit names', () => {
+    await t.test('panel renders no send buttons before setCatalog is called', () => {
         const { unitListEl } = makePanel();
-        const names = SENT_UNIT_PROFILES.map(p => p.name);
-        names.forEach(name => {
-            assert.ok(unitListEl.innerHTML.includes(name), `Missing unit name: ${name}`);
+        assert.strictEqual(unitListEl.innerHTML.includes('data-shape='), false);
+    });
+
+    // --- setCatalog: unit list rendering ---
+
+    await t.test('setCatalog renders all unit names', () => {
+        const { panel, unitListEl } = makePanel();
+        panel.setCatalog(CATALOG);
+        CATALOG.forEach(p => {
+            assert.ok(unitListEl.innerHTML.includes(p.name), `Missing unit name: ${p.name}`);
         });
     });
 
-    await t.test('unit list HTML contains all three costs', () => {
-        const { unitListEl } = makePanel();
-        SENT_UNIT_PROFILES.forEach(p => {
-            assert.ok(unitListEl.innerHTML.includes(`${p.cost}`), `Missing cost for ${p.name}`);
+    await t.test('setCatalog renders base costs', () => {
+        const { panel, unitListEl } = makePanel();
+        panel.setCatalog(CATALOG);
+        CATALOG.forEach(p => {
+            assert.ok(unitListEl.innerHTML.includes(`${p.base_cost}`), `Missing cost for ${p.name}`);
         });
     });
 
-    await t.test('unit list HTML contains income values for all units', () => {
-        const { unitListEl } = makePanel();
-        SENT_UNIT_PROFILES.forEach(p => {
+    await t.test('setCatalog renders income values', () => {
+        const { panel, unitListEl } = makePanel();
+        panel.setCatalog(CATALOG);
+        CATALOG.forEach(p => {
             assert.ok(unitListEl.innerHTML.includes(`${p.income}`), `Missing income for ${p.name}`);
         });
     });
 
-    await t.test('unit list HTML contains data-shape attributes for all shapes', () => {
-        const { unitListEl } = makePanel();
-        ['Square', 'Triangle', 'Circle'].forEach(shape => {
+    await t.test('setCatalog renders data-shape attributes for all shapes', () => {
+        const { panel, unitListEl } = makePanel();
+        panel.setCatalog(CATALOG);
+        CATALOG.forEach(p => {
             assert.ok(
-                unitListEl.innerHTML.includes(`data-shape="${shape}"`),
-                `Missing data-shape="${shape}"`
+                unitListEl.innerHTML.includes(`data-shape="${p.shape}"`),
+                `Missing data-shape="${p.shape}"`
             );
         });
     });
@@ -235,6 +215,7 @@ test('MercenaryPanel', async (t) => {
 
     await t.test('onSend fires with Square when Square send button clicked', () => {
         const { panel, onSendCalls, unitListEl } = makePanel();
+        panel.setCatalog(CATALOG);
         panel.updateGold(100);
         unitListEl.simulateSendClick('Square');
         assert.strictEqual(onSendCalls.length, 1);
@@ -243,6 +224,7 @@ test('MercenaryPanel', async (t) => {
 
     await t.test('onSend fires with Triangle when Triangle send button clicked', () => {
         const { panel, onSendCalls, unitListEl } = makePanel();
+        panel.setCatalog(CATALOG);
         panel.updateGold(100);
         unitListEl.simulateSendClick('Triangle');
         assert.strictEqual(onSendCalls[0], 'Triangle');
@@ -250,6 +232,7 @@ test('MercenaryPanel', async (t) => {
 
     await t.test('onSend fires with Circle when Circle send button clicked', () => {
         const { panel, onSendCalls, unitListEl } = makePanel();
+        panel.setCatalog(CATALOG);
         panel.updateGold(100);
         unitListEl.simulateSendClick('Circle');
         assert.strictEqual(onSendCalls[0], 'Circle');
@@ -257,6 +240,7 @@ test('MercenaryPanel', async (t) => {
 
     await t.test('onSend does not fire when unaffordable button is clicked', () => {
         const { panel, onSendCalls, unitListEl } = makePanel();
+        panel.setCatalog(CATALOG);
         panel.updateGold(0); // all buttons unaffordable
         unitListEl.simulateSendClick('Square');
         assert.strictEqual(onSendCalls.length, 0);
@@ -266,6 +250,7 @@ test('MercenaryPanel', async (t) => {
 
     await t.test('updateGold with 0 gold marks all buttons unaffordable', () => {
         const { panel, unitListEl } = makePanel();
+        panel.setCatalog(CATALOG);
         panel.updateGold(0);
         ['Square', 'Triangle', 'Circle'].forEach(shape => {
             assert.strictEqual(unitListEl.isUnaffordable(shape), true, `${shape} should be unaffordable with 0g`);
@@ -274,6 +259,7 @@ test('MercenaryPanel', async (t) => {
 
     await t.test('updateGold with 100 gold enables all buttons', () => {
         const { panel, unitListEl } = makePanel();
+        panel.setCatalog(CATALOG);
         panel.updateGold(100);
         assert.strictEqual(unitListEl.isUnaffordable('Circle'), false, 'Circle should be affordable with 100g');
         assert.strictEqual(unitListEl.isUnaffordable('Square'), false, 'Square should be affordable with 100g');
@@ -281,6 +267,7 @@ test('MercenaryPanel', async (t) => {
 
     await t.test('updateGold with 20 gold marks Circle unaffordable but not Square or Triangle', () => {
         const { panel, unitListEl } = makePanel();
+        panel.setCatalog(CATALOG);
         panel.updateGold(20);
         assert.strictEqual(unitListEl.isUnaffordable('Circle'), true, 'Circle (50g) should be unaffordable with 20g');
         assert.strictEqual(unitListEl.isUnaffordable('Square'), false, 'Square (8g) should be affordable with 20g');
@@ -291,6 +278,7 @@ test('MercenaryPanel', async (t) => {
 
     await t.test('updatePlayer rewrites cost labels and affordability from server prices', () => {
         const { panel, unitListEl } = makePanel();
+        panel.setCatalog(CATALOG);
         panel.updatePlayer(10, [7, 29, 63]);
         assert.strictEqual(unitListEl.costText('Square'), '7g');
         assert.strictEqual(unitListEl.isUnaffordable('Square'), false, '10 >= 7 should be affordable');
@@ -302,10 +290,36 @@ test('MercenaryPanel', async (t) => {
 
     await t.test('updatePlayer without nextSendCosts keeps previously known costs', () => {
         const { panel, unitListEl } = makePanel();
+        panel.setCatalog(CATALOG);
         panel.updatePlayer(100, [7, 29, 63]);
         panel.updatePlayer(5); // gold-only update, e.g. via updateGold pathway
         assert.strictEqual(unitListEl.costText('Square'), '7g', 'cost should persist from last server update');
         assert.strictEqual(unitListEl.isUnaffordable('Square'), true, '5 < 7 should now be unaffordable');
+    });
+
+    // --- Scalability contract: catalog shape/order/length is not hardcoded ---
+
+    await t.test('a catalog with different length and order still renders rows and maps costs by position', () => {
+        const { panel, unitListEl } = makePanel();
+        const reversedTwo: SendUnitCatalogEntry[] = [
+            { shape: 'Circle', name: 'Siege Mage', base_cost: 50, income: 4, bounty: 30 },
+            { shape: 'Square', name: 'Scout', base_cost: 8, income: 1, bounty: 6 },
+        ];
+        panel.setCatalog(reversedTwo);
+
+        // Renders exactly the two rows, in catalog order.
+        assert.ok(unitListEl.innerHTML.includes('data-shape="Circle"'));
+        assert.ok(unitListEl.innerHTML.includes('data-shape="Square"'));
+        assert.ok(!unitListEl.innerHTML.includes('data-shape="Triangle"'));
+
+        // Costs map by catalog position, not by shape identity: position 0
+        // (Circle) gets 15, position 1 (Square) gets 3 — inverted from the
+        // shapes' usual base costs, proving positional (not shape-keyed) mapping.
+        panel.updatePlayer(20, [15, 3]);
+        assert.strictEqual(unitListEl.costText('Circle'), '15g');
+        assert.strictEqual(unitListEl.costText('Square'), '3g');
+        assert.strictEqual(unitListEl.isUnaffordable('Circle'), false, '20 >= 15 should be affordable');
+        assert.strictEqual(unitListEl.isUnaffordable('Square'), false, '20 >= 3 should be affordable');
     });
 });
 
@@ -322,28 +336,30 @@ test('MercenaryPanel smoke test (Task 5.3)', async (t) => {
     });
 
     await t.test('panel displays correct names for all unit types', () => {
-        const { unitListEl } = makePanel();
-        const expectedNames = SENT_UNIT_PROFILES.map(p => p.name);
+        const { panel, unitListEl } = makePanel();
+        panel.setCatalog(CATALOG);
         // Verify Scout, Raider, Siege Mage are all present
-        expectedNames.forEach(name => {
-            assert.ok(unitListEl.innerHTML.includes(name), `Panel must display unit name: ${name}`);
+        CATALOG.forEach(p => {
+            assert.ok(unitListEl.innerHTML.includes(p.name), `Panel must display unit name: ${p.name}`);
         });
     });
 
     await t.test('panel displays correct gold costs for all unit types', () => {
         const { panel, unitListEl } = makePanel();
+        panel.setCatalog(CATALOG);
         panel.updateGold(999);
-        SENT_UNIT_PROFILES.forEach(p => {
+        CATALOG.forEach(p => {
             assert.ok(
-                unitListEl.innerHTML.includes(`${p.cost}g`),
-                `Panel must display cost "${p.cost}g" for ${p.name}`
+                unitListEl.innerHTML.includes(`${p.base_cost}g`),
+                `Panel must display cost "${p.base_cost}g" for ${p.name}`
             );
         });
     });
 
     await t.test('panel displays permanent income values for all unit types', () => {
-        const { unitListEl } = makePanel();
-        SENT_UNIT_PROFILES.forEach(p => {
+        const { panel, unitListEl } = makePanel();
+        panel.setCatalog(CATALOG);
+        CATALOG.forEach(p => {
             assert.ok(
                 unitListEl.innerHTML.includes(`+${p.income}`),
                 `Panel must display income "+${p.income}" for ${p.name}`
@@ -363,6 +379,7 @@ test('MercenaryPanel smoke test (Task 5.3)', async (t) => {
 
     await t.test('sending a unit dispatches correct shape to callback', () => {
         const { panel, onSendCalls, unitListEl } = makePanel();
+        panel.setCatalog(CATALOG);
         panel.updateGold(100);
         ['Square', 'Triangle', 'Circle'].forEach(shape => {
             unitListEl.simulateSendClick(shape);

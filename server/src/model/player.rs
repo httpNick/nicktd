@@ -21,7 +21,9 @@ pub struct Player {
     /// Sends of each shape this wave (Square/Triangle/Circle); resets each wave.
     pub sends_this_wave: [u32; 3],
     /// Price of the NEXT send of each shape — server-computed so the client
-    /// displays exactly what will be charged.
+    /// displays exactly what will be charged. Index order matches
+    /// `unit_config::send_unit_catalog()` (shape_index order): entry `i`
+    /// here is the cost for `send_unit_catalog()[i]`.
     pub next_send_costs: [u32; 3],
     /// Number of creeps this player's board has leaked this wave; resets each wave.
     pub leaks_this_wave: u32,

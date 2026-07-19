@@ -38,3 +38,11 @@ export interface CombatEvent {
     start_pos: Position;
     end_pos: Position;
 }
+
+export interface SendUnitCatalogEntry {
+    shape: string;
+    name: string;
+    base_cost: number;
+    income: number;
+    bounty: number;
+}

@@ -281,3 +281,68 @@ fn symmetric_builds_produce_symmetric_outcomes() {
         );
     }
 }
+
+/// Nick's 2026-07-18 playtest, as a property: P2 spends EVERY wave's gold on
+/// Scouts and never builds; P1 builds 4 Squares wave 1 and then stays static
+/// (worst-realistic defense). Sustained scout spam must NOT beat even a
+/// static defender — mercenaries are income/pressure tools, not an army
+/// (Legion TD parity). The defender's king must outlive wave 4 and the
+/// rusher must not win the game.
+#[test]
+fn sustained_scout_spam_does_not_beat_static_defense() {
+    let mut lobby = Lobby::new();
+    lobby.players.push(Player::new(R, "spammer".into(), 100));
+    lobby.players.push(Player::new(D, "static".into(), 100));
+    let mut schedule = build_main_schedule();
+    ticks(&mut lobby, &mut schedule, 5);
+
+    // Defender: 4 Squares, wave 1, then nothing forever.
+    for col in [2u32, 4, 6, 8] {
+        handle_client_message(
+            &mut lobby,
+            D,
+            ClientMessage::Place(PlaceMessage { shape: Shape::Square, row: 1, col }),
+        );
+    }
+
+    for wave in 1..=4u32 {
+        // Rusher: all gold into scouts, every build phase.
+        while lobby.players[0].gold >= lobby.players[0].next_send_costs[0] {
+            handle_client_message(&mut lobby, R, ClientMessage::SendUnit { shape: Shape::Square });
+        }
+        handle_client_message(&mut lobby, R, ClientMessage::SkipToCombat);
+        tick_past_phase(&mut lobby, &mut schedule, GamePhase::Build);
+        if lobby.game_state.phase == GamePhase::Combat {
+            tick_past_phase(&mut lobby, &mut schedule, GamePhase::Combat);
+        }
+        let kings = king_hps(&mut lobby);
+        eprintln!(
+            "[spam] end wave {}: phase={:?} winner={:?} R(gold={} income={}) D(gold={} income={}) kings={:?}",
+            wave, lobby.game_state.phase, lobby.winner_id,
+            lobby.players[0].gold, lobby.players[0].income,
+            lobby.players[1].gold, lobby.players[1].income,
+            kings
+        );
+        if lobby.game_state.phase == GamePhase::GameOver {
+            break;
+        }
+    }
+
+    assert_ne!(
+        lobby.winner_id,
+        Some(R),
+        "sustained scout spam must not beat even a static 4-tower defense (game phase {:?}, wave {})",
+        lobby.game_state.phase,
+        lobby.game_state.wave_number
+    );
+    let d_king = king_hps(&mut lobby)
+        .into_iter()
+        .find(|(id, _)| *id == D)
+        .map(|(_, hp)| hp)
+        .unwrap_or(0.0);
+    assert!(
+        d_king > 0.0,
+        "static defender's king must outlive 4 waves of scout spam (HP {})",
+        d_king
+    );
+}

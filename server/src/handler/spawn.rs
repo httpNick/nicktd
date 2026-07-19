@@ -85,7 +85,12 @@ pub fn spawn_sent_enemy(
     let scaling_multiplier = crate::handler::wave::get_scaling_multiplier(wave);
 
     let final_health = DEFAULT_HEALTH * scaling_multiplier * sent_profile.health_multiplier;
-    let final_damage = profile.combat.primary.damage * scaling_multiplier;
+    let damage_mult = match shape {
+        Shape::Square => crate::model::unit_config::SENT_SQUARE_DAMAGE_MULT,
+        Shape::Triangle => crate::model::unit_config::SENT_TRIANGLE_DAMAGE_MULT,
+        Shape::Circle => crate::model::unit_config::SENT_CIRCLE_DAMAGE_MULT,
+    };
+    let final_damage = profile.combat.primary.damage * scaling_multiplier * damage_mult;
 
     world
         .spawn((

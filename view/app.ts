@@ -1,5 +1,5 @@
 import { initRenderer, RendererHandle, ClickHit } from './renderer';
-import { Unit, Player, CombatEvent } from './types';
+import { Unit, Player, CombatEvent, SendUnitCatalogEntry } from './types';
 import { applyThemeToDom } from './theme';
 import { UnitInfoPanel } from './unit_info_panel';
 import { MercenaryPanel } from './mercenary_panel';
@@ -57,6 +57,7 @@ interface GameStateDelta {
 type ServerMessage =
     | { type: 'Queued' }
     | { type: 'MatchFound' }
+    | { type: 'SendUnitCatalog'; data: SendUnitCatalogEntry[] }
     | { type: 'GameState'; data: GameState }
     | { type: 'GameStateDelta'; data: GameStateDelta }
     | { type: 'CombatEvents'; data: CombatEvent[] }
@@ -241,6 +242,9 @@ function connectAndShowLobby() {
                 isInGame = true;
                 resetQueueUi();
                 showGameView();
+                break;
+            case 'SendUnitCatalog':
+                mercPanel.setCatalog(serverMsg.data);
                 break;
             case 'GameState':
                 if (!isInGame) return;

@@ -1,21 +1,6 @@
+import { SendUnitCatalogEntry } from './types';
+
 export type Shape = 'Square' | 'Circle' | 'Triangle';
-
-export interface SentUnitProfile {
-    shape: Shape;
-    name: string;
-    cost: number;
-    income: number;
-    bounty: number;
-}
-
-export const SENT_UNIT_PROFILES: SentUnitProfile[] = [
-    { shape: 'Square', name: 'Scout', cost: 8, income: 1, bounty: 6 },
-    { shape: 'Triangle', name: 'Raider', cost: 20, income: 2, bounty: 12 },
-    { shape: 'Circle', name: 'Siege Mage', cost: 50, income: 4, bounty: 30 },
-];
-
-/** Server order for next_send_costs: Square, Triangle, Circle. */
-const SHAPE_INDEX: Record<Shape, number> = { Square: 0, Triangle: 1, Circle: 2 };
 
 export interface MercenaryPanelCallbacks {
     onSend: (shape: Shape) => void;
@@ -26,7 +11,8 @@ export class MercenaryPanel {
     private callbacks: MercenaryPanelCallbacks;
     private unitListEl: HTMLElement | null;
     private _currentGold: number = 0;
-    private _currentCosts: number[] = SENT_UNIT_PROFILES.map(p => p.cost);
+    private _currentCosts: number[] = [];
+    private _catalog: SendUnitCatalogEntry[] = [];
 
     constructor(containerElement: HTMLElement, callbacks: MercenaryPanelCallbacks) {
         this.container = containerElement;
@@ -40,7 +26,7 @@ export class MercenaryPanel {
 
         q<HTMLButtonElement>('[data-merc="close-btn"]')?.addEventListener('click', () => this.hide());
 
-        this._renderUnits();
+        this._renderPlaceholder();
     }
 
     show(): void { this.container.style.display = 'block'; }
@@ -52,16 +38,25 @@ export class MercenaryPanel {
 
     get isVisible(): boolean { return this.container.style.display !== 'none'; }
 
-    /** Update gold and the server-computed escalating prices together. */
+    /** Store the server-driven catalog and (re)build rows from it. Catalog
+     * position i pairs with `next_send_costs[i]` — the order contract. */
+    setCatalog(entries: SendUnitCatalogEntry[]): void {
+        this._catalog = entries;
+        this._currentCosts = entries.map(e => e.base_cost);
+        this._renderUnits();
+        this._applyAffordability();
+    }
+
+    /** Update gold and the server-computed escalating prices together.
+     * `nextSendCosts[i]` maps to `catalog[i]` by position. */
     updatePlayer(gold: number, nextSendCosts?: number[]): void {
         this._currentGold = gold;
-        if (nextSendCosts && nextSendCosts.length === 3) {
+        if (nextSendCosts && nextSendCosts.length === this._catalog.length) {
             this._currentCosts = nextSendCosts;
         }
         if (!this.unitListEl) return;
-        this.unitListEl.querySelectorAll<HTMLButtonElement>('[data-shape]').forEach(btn => {
-            const shape = btn.getAttribute('data-shape') as Shape;
-            const cost = this._currentCosts[SHAPE_INDEX[shape]];
+        this.unitListEl.querySelectorAll<HTMLButtonElement>('[data-shape]').forEach((btn, i) => {
+            const cost = this._currentCosts[i];
             const costEl = btn.parentElement?.querySelector<HTMLElement>('.merc-unit-cost');
             if (costEl) costEl.textContent = `${cost}g`;
             if (gold >= cost) {
@@ -76,13 +71,26 @@ export class MercenaryPanel {
         this.updatePlayer(gold);
     }
 
+    private _applyAffordability(): void {
+        this.updatePlayer(this._currentGold);
+    }
+
+    private _renderPlaceholder(): void {
+        if (!this.unitListEl) return;
+        this.unitListEl.innerHTML = '<div class="merc-unit-placeholder">Waiting for catalog…</div>';
+    }
+
     private _renderUnits(): void {
         if (!this.unitListEl) return;
-        this.unitListEl.innerHTML = SENT_UNIT_PROFILES.map(p => {
+        if (this._catalog.length === 0) {
+            this._renderPlaceholder();
+            return;
+        }
+        this.unitListEl.innerHTML = this._catalog.map(p => {
             return [
                 `<div class="merc-unit-row">`,
                 `<span class="merc-unit-name">${p.name}</span>`,
-                `<span class="merc-unit-cost">${p.cost}g</span>`,
+                `<span class="merc-unit-cost">${p.base_cost}g</span>`,
                 `<span class="merc-unit-income">+${p.income}/round</span>`,
                 `<button class="merc-send-btn" data-shape="${p.shape}" data-unaffordable="true">Send</button>`,
                 `</div>`,

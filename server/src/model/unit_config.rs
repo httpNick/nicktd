@@ -136,10 +136,17 @@ pub fn sent_unit_cost(shape: Shape, wave: u32, n_this_wave: u32) -> u32 {
     (base * wave_mult * repeat_mult).ceil() as u32
 }
 
+/// Damage multiplier applied to the base unit damage when spawned as a sent
+/// unit. Mercenaries are deliberately weak fighters (Legion TD parity): their
+/// value is permanent income and king pressure, not lane-clearing power.
+pub const SENT_SQUARE_DAMAGE_MULT: f32 = 0.5;
+pub const SENT_TRIANGLE_DAMAGE_MULT: f32 = 0.7;
+pub const SENT_CIRCLE_DAMAGE_MULT: f32 = 0.8;
+
 /// Health multiplier applied on top of DEFAULT_HEALTH when spawned.
-pub const SENT_SQUARE_HEALTH_MULT: f32 = 0.7;
-pub const SENT_TRIANGLE_HEALTH_MULT: f32 = 1.2;
-pub const SENT_CIRCLE_HEALTH_MULT: f32 = 1.5;
+pub const SENT_SQUARE_HEALTH_MULT: f32 = 0.4;
+pub const SENT_TRIANGLE_HEALTH_MULT: f32 = 0.8;
+pub const SENT_CIRCLE_HEALTH_MULT: f32 = 1.0;
 
 /// Static profile for a unit a player can send to the opponent's board.
 #[derive(Debug, Clone, PartialEq)]
@@ -181,6 +188,26 @@ pub fn get_sent_unit_profile(shape: Shape) -> SentUnitProfile {
             health_multiplier: SENT_CIRCLE_HEALTH_MULT,
         },
     }
+}
+
+/// Catalog of sendable units, in the SAME order as `Player::next_send_costs`
+/// (shape_index order). The client renders its Mercenary Panel purely from
+/// this — adding a sendable unit here (+ costs array slot) requires no
+/// client change.
+pub fn send_unit_catalog() -> Vec<crate::model::messages::SendUnitCatalogEntry> {
+    [Shape::Square, Shape::Triangle, Shape::Circle]
+        .into_iter()
+        .map(|shape| {
+            let profile = get_sent_unit_profile(shape);
+            crate::model::messages::SendUnitCatalogEntry {
+                shape,
+                name: profile.name,
+                base_cost: profile.send_cost,
+                income: profile.income,
+                bounty: profile.bounty,
+            }
+        })
+        .collect()
 }
 
 #[cfg(test)]
@@ -299,5 +326,28 @@ mod tests {
         assert_eq!(shape_index(Shape::Square), 0);
         assert_eq!(shape_index(Shape::Triangle), 1);
         assert_eq!(shape_index(Shape::Circle), 2);
+    }
+
+    #[test]
+    fn send_unit_catalog_order_matches_shape_index() {
+        let catalog = send_unit_catalog();
+        assert_eq!(catalog.len(), 3);
+        for entry in &catalog {
+            assert_eq!(catalog[shape_index(entry.shape)].shape, entry.shape);
+        }
+    }
+
+    #[test]
+    fn send_unit_catalog_values_match_get_sent_unit_profile() {
+        let catalog = send_unit_catalog();
+        for shape in [Shape::Square, Shape::Triangle, Shape::Circle] {
+            let profile = get_sent_unit_profile(shape);
+            let entry = &catalog[shape_index(shape)];
+            assert_eq!(entry.shape, shape);
+            assert_eq!(entry.name, profile.name);
+            assert_eq!(entry.base_cost, profile.send_cost);
+            assert_eq!(entry.income, profile.income);
+            assert_eq!(entry.bounty, profile.bounty);
+        }
     }
 }
