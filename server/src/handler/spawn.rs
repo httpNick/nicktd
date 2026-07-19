@@ -1,7 +1,7 @@
 use crate::model::components::{
     AttackRange, AttackStats, AttackTimer, Boss, Bounty, CollisionRadius, DefenseSpecialty,
     DefenseStats, Enemy, Health, HomePosition, King, PlayerIdComponent, Position, Resistances,
-    ShapeComponent, TargetPositions, Worker, WorkerState,
+    ShapeComponent, TargetPositions, Tower, Worker, WorkerState,
 };
 use crate::model::king_config::{
     KING_BASE_DAMAGE, KING_BASE_HP, KING_BASE_RANGE, KING_BASE_RATE, KING_COLLISION_RADIUS,
@@ -127,6 +127,7 @@ pub fn spawn_unit(world: &mut World, pos: Position, shape: Shape, player_id: i64
         HomePosition(pos),
         ShapeComponent(shape),
         PlayerIdComponent(player_id),
+        Tower,
         CollisionRadius(profile.radius),
         AttackRange(profile.combat.primary.range),
         Health {

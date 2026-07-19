@@ -1,6 +1,6 @@
 use crate::model::components::{
     AttackRange, AttackStats, AttackTimer, Bounty, CollisionRadius, CombatProfile, Dead, Enemy,
-    Health, HomePosition, InAttackRange, King, Mana, Position, Target, Worker,
+    Health, HomePosition, InAttackRange, King, Mana, Position, Target, Tower, Worker,
 };
 use crate::model::constants::{LEFT_BOARD_END, RIGHT_BOARD_END, RIGHT_BOARD_START, TOTAL_HEIGHT};
 use crate::model::game_state::DeltaTime;
@@ -82,13 +82,8 @@ pub fn update_targeting(world: &mut World) {
         .collect();
 
     if !enemy_positions.is_empty() {
-        let mut query = world.query_filtered::<(Entity, &Position), (
-            Without<Enemy>,
-            Without<Target>,
-            Without<Worker>,
-            Without<Dead>,
-            Without<King>,
-        )>();
+        let mut query =
+            world.query_filtered::<(Entity, &Position), (With<Tower>, Without<Target>, Without<Dead>)>();
         for (unit_entity, unit_pos) in query.iter(world) {
             let unit_board = get_board(unit_pos.x);
             if unit_board.is_none() {
@@ -117,12 +112,7 @@ pub fn update_targeting(world: &mut World) {
     // Kings are excluded: in-lane enemies drift downward by default and are routed to the
     // king zone by update_leaked_creeps once they cross TOTAL_HEIGHT.
     let unit_positions: Vec<(Entity, Position)> = world
-        .query_filtered::<(Entity, &Position), (
-            Without<Enemy>,
-            Without<Worker>,
-            Without<King>,
-            Without<Dead>,
-        )>()
+        .query_filtered::<(Entity, &Position), (With<Tower>, Without<Dead>)>()
         .iter(world)
         .map(|(entity, pos)| (entity, Position { x: pos.x, y: pos.y }))
         .collect();

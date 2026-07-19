@@ -44,14 +44,14 @@ pub fn try_sell_entity(
     player_id: i64,
     entity_id: u64,
 ) -> Option<u32> {
-    use crate::model::components::King as KingMarker;
-    use bevy_ecs::prelude::Without;
+    use crate::model::components::Tower;
+    use bevy_ecs::prelude::With;
 
     let mut query = lobby.game_state.world.query_filtered::<(
         Entity,
         &PlayerIdComponent,
         &ShapeComponent,
-    ), (Without<Worker>, Without<KingMarker>)>();
+    ), With<Tower>>();
     let found = query
         .iter(&lobby.game_state.world)
         .find(|(e, owner, _)| e.to_bits() == entity_id && owner.0 == player_id)
