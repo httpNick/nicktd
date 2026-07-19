@@ -21,6 +21,7 @@ export interface Player {
     income: number;
     king_tier: number;
     spawning_queue: ('Square' | 'Circle' | 'Triangle')[];
+    next_send_costs: number[];
 }
 
 export interface Position {
@@ -36,4 +37,12 @@ export interface CombatEvent {
     attack_type: DamageType;
     start_pos: Position;
     end_pos: Position;
+}
+
+export interface SendUnitCatalogEntry {
+    shape: string;
+    name: string;
+    base_cost: number;
+    income: number;
+    bounty: number;
 }

@@ -25,12 +25,18 @@ pub struct PlaceMessage {
 #[serde(tag = "action", content = "payload", rename_all = "camelCase")]
 pub enum ClientMessage {
     Place(PlaceMessage),
-    SellById { entity_id: u64 },
+    SellById {
+        entity_id: u64,
+    },
     SkipToCombat,
     LeaveLobby,
     HireWorker {},
-    RequestUnitInfo { entity_id: u64 },
-    SendUnit { shape: Shape },
+    RequestUnitInfo {
+        entity_id: u64,
+    },
+    SendUnit {
+        shape: Shape,
+    },
     UpgradeKing {},
     /// Client detected a seq gap (missed a delta) and asks for a direct resync.
     RequestFullState,
@@ -101,6 +107,20 @@ pub struct GameStateDelta {
     pub phase_info: Option<PhaseInfo>,
 }
 
+/// One entry in the server-driven mercenary send catalog. Sent to the client
+/// once per match (right after `MatchFound`) so the Mercenary Panel can be
+/// built purely from server data — adding a new sendable unit requires no
+/// client change. See `send_unit_catalog` doc comment for the order
+/// contract with `Player::next_send_costs`.
+#[derive(Serialize, Clone, Debug)]
+pub struct SendUnitCatalogEntry {
+    pub shape: Shape,
+    pub name: &'static str,
+    pub base_cost: u32,
+    pub income: u32,
+    pub bounty: u32,
+}
+
 #[derive(Serialize, Clone, Debug)]
 #[serde(tag = "type", content = "data")]
 pub enum ServerMessage {
@@ -114,6 +134,9 @@ pub enum ServerMessage {
     Queued,
     /// A match was created; the client should proceed to the game screen.
     MatchFound,
+    /// Server-driven mercenary send catalog, sent once right after
+    /// `MatchFound`. Order matches `Player::next_send_costs` by index.
+    SendUnitCatalog(Vec<SendUnitCatalogEntry>),
 }
 
 #[cfg(test)]
@@ -292,5 +315,23 @@ mod tests {
             serde_json::to_string(&ServerMessage::MatchFound).unwrap(),
             r#"{"type":"MatchFound"}"#
         );
+    }
+
+    #[test]
+    fn serialize_send_unit_catalog() {
+        let msg = ServerMessage::SendUnitCatalog(vec![SendUnitCatalogEntry {
+            shape: Shape::Square,
+            name: "Scout",
+            base_cost: 8,
+            income: 1,
+            bounty: 6,
+        }]);
+        let json = serde_json::to_string(&msg).unwrap();
+        assert!(json.starts_with(r#"{"type":"SendUnitCatalog","data":["#));
+        assert!(json.contains(r#""shape":"Square""#));
+        assert!(json.contains(r#""name":"Scout""#));
+        assert!(json.contains(r#""base_cost":8"#));
+        assert!(json.contains(r#""income":1"#));
+        assert!(json.contains(r#""bounty":6"#));
     }
 }

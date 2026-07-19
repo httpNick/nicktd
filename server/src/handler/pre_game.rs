@@ -1,6 +1,9 @@
 use crate::{
     handler::matchmaking::{self, JoinQueueOutcome},
-    model::messages::{ClientMessage, ServerMessage},
+    model::{
+        messages::{ClientMessage, ServerMessage},
+        unit_config,
+    },
     routes::ws::send_message,
     state::{ServerState, UpgradedWebSocket},
 };
@@ -41,6 +44,11 @@ pub async fn pre_game_loop(
                             match matchmaking::join_queue(server_state, player_id, username.clone()).await {
                                 JoinQueueOutcome::Matched(match_id) => {
                                     let _ = send_message(ws_sender, ServerMessage::MatchFound).await;
+                                    let _ = send_message(
+                                        ws_sender,
+                                        ServerMessage::SendUnitCatalog(unit_config::send_unit_catalog()),
+                                    )
+                                    .await;
                                     return PreGameLoopResult::Joined(match_id);
                                 }
                                 JoinQueueOutcome::Waiting(mut match_rx) => {
@@ -59,6 +67,11 @@ pub async fn pre_game_loop(
                                                 match result {
                                                     Ok(match_id) => {
                                                         let _ = send_message(ws_sender, ServerMessage::MatchFound).await;
+                                                        let _ = send_message(
+                                                            ws_sender,
+                                                            ServerMessage::SendUnitCatalog(unit_config::send_unit_catalog()),
+                                                        )
+                                                        .await;
                                                         return PreGameLoopResult::Joined(match_id);
                                                     }
                                                     // Sender dropped: our entry was replaced

@@ -6,6 +6,7 @@ use crate::model::{
 use bevy_ecs::prelude::{Commands, Entity, Query, Res, ResMut, With};
 
 pub const WORKER_SPEED: f32 = 50.0;
+pub const WORKER_CAP: usize = 7;
 
 pub const VEIN_POSITIONS: [Position; 2] = [
     Position { x: 700.0, y: 50.0 },

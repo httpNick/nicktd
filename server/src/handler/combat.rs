@@ -1,6 +1,6 @@
 use crate::model::components::{
     AttackRange, AttackStats, AttackTimer, Bounty, CollisionRadius, CombatProfile, Dead, Enemy,
-    Health, HomePosition, InAttackRange, King, Mana, Position, Target, Worker,
+    Health, HomePosition, InAttackRange, King, Mana, Position, Target, Tower, Worker,
 };
 use crate::model::constants::{LEFT_BOARD_END, RIGHT_BOARD_END, RIGHT_BOARD_START, TOTAL_HEIGHT};
 use crate::model::game_state::DeltaTime;
@@ -10,6 +10,11 @@ use bevy_ecs::message::Messages;
 use bevy_ecs::prelude::{Entity, Query, Res, With, Without, World};
 
 pub const SPEED: f32 = 80.0; // pixels per second
+
+/// Gold charged to the board owner per leaked creep (spec §3).
+pub const LEAK_GOLD_PENALTY: u32 = 5;
+/// Maximum leak gold charged per player per wave.
+pub const LEAK_PENALTY_WAVE_CAP: u32 = 50;
 
 fn get_board(x: f32) -> Option<u8> {
     if x < LEFT_BOARD_END {
@@ -77,13 +82,8 @@ pub fn update_targeting(world: &mut World) {
         .collect();
 
     if !enemy_positions.is_empty() {
-        let mut query = world.query_filtered::<(Entity, &Position), (
-            Without<Enemy>,
-            Without<Target>,
-            Without<Worker>,
-            Without<Dead>,
-            Without<King>,
-        )>();
+        let mut query =
+            world.query_filtered::<(Entity, &Position), (With<Tower>, Without<Target>, Without<Dead>)>();
         for (unit_entity, unit_pos) in query.iter(world) {
             let unit_board = get_board(unit_pos.x);
             if unit_board.is_none() {
@@ -112,7 +112,7 @@ pub fn update_targeting(world: &mut World) {
     // Kings are excluded: in-lane enemies drift downward by default and are routed to the
     // king zone by update_leaked_creeps once they cross TOTAL_HEIGHT.
     let unit_positions: Vec<(Entity, Position)> = world
-        .query_filtered::<(Entity, &Position), (Without<Enemy>, Without<Worker>, Without<King>, Without<Dead>)>()
+        .query_filtered::<(Entity, &Position), (With<Tower>, Without<Dead>)>()
         .iter(world)
         .map(|(entity, pos)| (entity, Position { x: pos.x, y: pos.y }))
         .collect();
@@ -680,6 +680,28 @@ pub fn update_leaked_creeps(world: &mut World) {
         // Assign the king as the leaked enemy's target.
         // Do NOT modify attack stats - enemies keep their original combat stats when leaked.
         world.entity_mut(entity).insert(target);
+    }
+
+    // Charge the board owner for each newly leaked creep (once per creep — the
+    // Target-absence guard above makes this loop see a creep only once).
+    let mut penalties: Vec<u8> = Vec::new(); // board index per leaked creep
+    for (_, enemy_pos) in &leaked_enemies {
+        if let Some(board) = get_board(enemy_pos.x) {
+            penalties.push(board);
+        }
+    }
+    if !penalties.is_empty() {
+        if let Some(mut players) = world.get_resource_mut::<Players>() {
+            for board in penalties {
+                if let Some(player) = players.0.get_mut(board as usize) {
+                    let charged_so_far = player.leaks_this_wave * LEAK_GOLD_PENALTY;
+                    if charged_so_far < LEAK_PENALTY_WAVE_CAP {
+                        player.gold = player.gold.saturating_sub(LEAK_GOLD_PENALTY);
+                    }
+                    player.leaks_this_wave += 1;
+                }
+            }
+        }
     }
 }
 
@@ -2291,6 +2313,83 @@ mod tests {
         );
     }
 
+    // --- Task 2 TDD: leak gold penalty ---
+
+    #[test]
+    fn leak_charges_board_owner_five_gold() {
+        use crate::handler::spawn::{spawn_enemy, spawn_king};
+        use crate::model::player::{Player, Players};
+        let mut world = World::new();
+        world.insert_resource(Players(vec![
+            Player::new(1, "left".into(), 100),
+            Player::new(2, "right".into(), 100),
+        ]));
+        spawn_king(&mut world, 1, 0);
+        // Leak on the LEFT board (x=100) → players[0] pays.
+        spawn_enemy(
+            &mut world,
+            Position {
+                x: 100.0,
+                y: TOTAL_HEIGHT + 10.0,
+            },
+            Shape::Triangle,
+            1,
+        );
+        update_leaked_creeps(&mut world);
+        let players = world.resource::<Players>();
+        assert_eq!(players.0[0].gold, 95);
+        assert_eq!(players.0[0].leaks_this_wave, 1);
+        assert_eq!(players.0[1].gold, 100, "opponent unaffected");
+    }
+
+    #[test]
+    fn leak_penalty_caps_at_fifty_per_wave_and_floors_at_zero() {
+        use crate::handler::spawn::{spawn_enemy, spawn_king};
+        use crate::model::player::{Player, Players};
+        let mut world = World::new();
+        let mut poor = Player::new(1, "poor".into(), 12);
+        poor.leaks_this_wave = 9; // 45g already charged this wave
+        world.insert_resource(Players(vec![poor]));
+        spawn_king(&mut world, 1, 0);
+        // Two more leaks: 10th charges min(5, cap-45)=5 → gold 12→7;
+        // 11th exceeds the 50g cap → no charge.
+        for x in [100.0, 140.0] {
+            spawn_enemy(
+                &mut world,
+                Position {
+                    x,
+                    y: TOTAL_HEIGHT + 10.0,
+                },
+                Shape::Square,
+                1,
+            );
+        }
+        update_leaked_creeps(&mut world);
+        let players = world.resource::<Players>();
+        assert_eq!(players.0[0].gold, 7);
+        assert_eq!(players.0[0].leaks_this_wave, 11);
+    }
+
+    #[test]
+    fn leak_penalty_never_underflows_gold() {
+        use crate::handler::spawn::{spawn_enemy, spawn_king};
+        use crate::model::player::{Player, Players};
+        let mut world = World::new();
+        world.insert_resource(Players(vec![Player::new(1, "broke".into(), 3)]));
+        spawn_king(&mut world, 1, 0);
+        spawn_enemy(
+            &mut world,
+            Position {
+                x: 100.0,
+                y: TOTAL_HEIGHT + 10.0,
+            },
+            Shape::Square,
+            1,
+        );
+        update_leaked_creeps(&mut world);
+        assert_eq!(world.resource::<Players>().0[0].gold, 0);
+    }
+
     #[test]
     fn tower_targeting_excludes_leaked_enemies() {
         use crate::handler::spawn::spawn_king;
@@ -2399,38 +2498,56 @@ mod tests {
 
         // Both squares have 45px attack range (default for squares)
         world.entity_mut(square_in_range).insert(AttackRange(45.0));
-        world.entity_mut(square_out_of_range).insert(AttackRange(45.0));
+        world
+            .entity_mut(square_out_of_range)
+            .insert(AttackRange(45.0));
 
         // Run the range marker system
         update_attack_range_markers(&mut world);
 
         // The close square should NOT have InAttackRange (80px > 45px range)
         assert!(
-            world.entity(square_in_range).get::<InAttackRange>().is_none(),
+            world
+                .entity(square_in_range)
+                .get::<InAttackRange>()
+                .is_none(),
             "Square 80px away should not have InAttackRange with 45px range"
         );
 
         // The far square should NOT have InAttackRange either
         assert!(
-            world.entity(square_out_of_range).get::<InAttackRange>().is_none(),
+            world
+                .entity(square_out_of_range)
+                .get::<InAttackRange>()
+                .is_none(),
             "Square 200px away should not have InAttackRange"
         );
 
         // Now move the first square much closer (within attack range)
-        world.entity_mut(square_in_range).get_mut::<Position>().unwrap().y = 880.0; // 20 pixels away
+        world
+            .entity_mut(square_in_range)
+            .get_mut::<Position>()
+            .unwrap()
+            .y = 880.0; // 20 pixels away
 
         // Re-run the range marker system
         update_attack_range_markers(&mut world);
 
         // Now the close square SHOULD have InAttackRange (20px < 45px range)
         assert!(
-            world.entity(square_in_range).get::<InAttackRange>().is_some(),
+            world
+                .entity(square_in_range)
+                .get::<InAttackRange>()
+                .is_some(),
             "Square 20px away should have InAttackRange with 45px range"
         );
 
         // The far square still should not
         assert!(
-            world.entity(square_out_of_range).get::<InAttackRange>().is_none(),
+            world
+                .entity(square_out_of_range)
+                .get::<InAttackRange>()
+                .is_none(),
             "Square 200px away should still not have InAttackRange"
         );
 
@@ -2438,20 +2555,30 @@ mod tests {
         world.entity_mut(square_in_range).insert(Dead);
 
         // Move the second square closer (simulating repositioning after first dies)
-        world.entity_mut(square_out_of_range).get_mut::<Position>().unwrap().y = 870.0; // 30 pixels away
+        world
+            .entity_mut(square_out_of_range)
+            .get_mut::<Position>()
+            .unwrap()
+            .y = 870.0; // 30 pixels away
 
         // Re-run the range marker system
         update_attack_range_markers(&mut world);
 
         // Dead entity should lose InAttackRange (because query excludes Dead entities)
         assert!(
-            world.entity(square_in_range).get::<InAttackRange>().is_none(),
+            world
+                .entity(square_in_range)
+                .get::<InAttackRange>()
+                .is_none(),
             "Dead square should not have InAttackRange"
         );
 
         // The repositioned square should now have InAttackRange (30px < 45px)
         assert!(
-            world.entity(square_out_of_range).get::<InAttackRange>().is_some(),
+            world
+                .entity(square_out_of_range)
+                .get::<InAttackRange>()
+                .is_some(),
             "Square repositioned to 30px away should have InAttackRange with 45px range"
         );
     }
@@ -2472,8 +2599,8 @@ mod tests {
         let enemy = crate::handler::spawn::spawn_enemy(
             &mut world,
             Position {
-                x: 300.0,  // Same x as left king
-                y: TOTAL_HEIGHT + 5.0,  // Just above TOTAL_HEIGHT (leaked)
+                x: 300.0,              // Same x as left king
+                y: TOTAL_HEIGHT + 5.0, // Just above TOTAL_HEIGHT (leaked)
             },
             Shape::Square,
             1,
@@ -2493,7 +2620,8 @@ mod tests {
         let has_in_range = world.entity(enemy).get::<InAttackRange>().is_some();
         let enemy_pos = world.entity(enemy).get::<Position>().unwrap();
         let king_pos = world.entity(king).get::<Position>().unwrap();
-        let distance = ((king_pos.x - enemy_pos.x).powi(2) + (king_pos.y - enemy_pos.y).powi(2)).sqrt();
+        let distance =
+            ((king_pos.x - enemy_pos.x).powi(2) + (king_pos.y - enemy_pos.y).powi(2)).sqrt();
 
         assert!(
             has_in_range,

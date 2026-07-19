@@ -1,5 +1,5 @@
 import { initRenderer, RendererHandle, ClickHit } from './renderer';
-import { Unit, Player, CombatEvent } from './types';
+import { Unit, Player, CombatEvent, SendUnitCatalogEntry } from './types';
 import { applyThemeToDom } from './theme';
 import { UnitInfoPanel } from './unit_info_panel';
 import { MercenaryPanel } from './mercenary_panel';
@@ -57,6 +57,7 @@ interface GameStateDelta {
 type ServerMessage =
     | { type: 'Queued' }
     | { type: 'MatchFound' }
+    | { type: 'SendUnitCatalog'; data: SendUnitCatalogEntry[] }
     | { type: 'GameState'; data: GameState }
     | { type: 'GameStateDelta'; data: GameStateDelta }
     | { type: 'CombatEvents'; data: CombatEvent[] }
@@ -92,6 +93,8 @@ const gameTimerEl = document.getElementById('game-timer') as HTMLSpanElement;
 const goldDisplay = document.getElementById('gold-display') as HTMLSpanElement;
 const livesDisplay = document.getElementById('lives-display') as HTMLSpanElement;
 const hireWorkerBtn = document.getElementById('hire-worker-btn') as HTMLButtonElement;
+
+const WORKER_CAP = 7;
 
 let selectedShape: 'Square' | 'Circle' | 'Triangle' = 'Square';
 let unitMap = new Map<number, Unit>();
@@ -240,6 +243,9 @@ function connectAndShowLobby() {
                 resetQueueUi();
                 showGameView();
                 break;
+            case 'SendUnitCatalog':
+                mercPanel.setCatalog(serverMsg.data);
+                break;
             case 'GameState':
                 if (!isInGame) return;
                 if (gameView.style.display === 'none') showGameView();
@@ -321,7 +327,7 @@ function refreshDerivedDisplays() {
         goldDisplay.textContent = me.income > 0
             ? `${me.gold} (+${me.income}/round)`
             : me.gold.toString();
-        mercPanel.updateGold(me.gold);
+        mercPanel.updatePlayer(me.gold, me.next_send_costs);
     }
 
     // Update king HP display
@@ -330,6 +336,12 @@ function refreshDerivedDisplays() {
         livesDisplay.textContent = `${myKing.current_hp}/${myKing.max_hp}`;
     } else {
         livesDisplay.textContent = '--';
+    }
+
+    // Worker cap: disable hire button once this player has hired the max (server enforces the cap; this is UX polish).
+    if (myPlayerId !== null) {
+        const myWorkers = currentUnits().filter(u => u.is_worker && u.owner_id === myPlayerId).length;
+        hireWorkerBtn.disabled = myWorkers >= WORKER_CAP;
     }
 
     // Update king upgrade panel

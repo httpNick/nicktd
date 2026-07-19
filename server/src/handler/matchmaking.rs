@@ -118,12 +118,18 @@ mod tests {
         let JoinQueueOutcome::Waiting(rx) = join_queue(&state, 1, "a".into()).await else {
             panic!("first joiner must wait");
         };
-        let JoinQueueOutcome::Matched(match_id) = join_queue(&state, 2, "b".into()).await
-        else {
+        let JoinQueueOutcome::Matched(match_id) = join_queue(&state, 2, "b".into()).await else {
             panic!("second joiner must match");
         };
-        assert_eq!(rx.await.unwrap(), match_id, "waiter must be notified with the same match_id");
-        assert!(state.queue.lock().await.is_none(), "queue must be empty after pairing");
+        assert_eq!(
+            rx.await.unwrap(),
+            match_id,
+            "waiter must be notified with the same match_id"
+        );
+        assert!(
+            state.queue.lock().await.is_none(),
+            "queue must be empty after pairing"
+        );
 
         let matches = state.matches.read().await;
         let lobby = matches.get(&match_id).unwrap().lock().await;
@@ -156,7 +162,10 @@ mod tests {
             matches!(outcome, JoinQueueOutcome::Waiting(_)),
             "joiner must become the new waiter, not match a dead one"
         );
-        assert!(state.matches.read().await.is_empty(), "no ghost match may be created");
+        assert!(
+            state.matches.read().await.is_empty(),
+            "no ghost match may be created"
+        );
     }
 
     #[tokio::test]
@@ -174,7 +183,10 @@ mod tests {
         let state = test_state().await;
         let _rx = join_queue(&state, 1, "a".into()).await;
         assert!(!leave_queue(&state, 2).await);
-        assert!(state.queue.lock().await.is_some(), "player 1 must still be queued");
+        assert!(
+            state.queue.lock().await.is_some(),
+            "player 1 must still be queued"
+        );
     }
 
     #[tokio::test]

@@ -1,5 +1,8 @@
 use crate::model::shape::Shape;
 
+/// Clearing this wave wins the game. Bosses spawn on wave 6 (mid) and this wave.
+pub const FINAL_WAVE: u32 = 12;
+
 pub struct WaveConfig {
     pub enemies: Vec<Shape>,
     #[allow(dead_code)]
@@ -41,6 +44,65 @@ pub fn get_wave_config(wave: u32) -> WaveConfig {
             enemies: vec![Shape::Circle], // This will be the Boss
             is_boss_wave: true,
         },
+        7 => WaveConfig {
+            enemies: vec![
+                Shape::Square,
+                Shape::Square,
+                Shape::Triangle,
+                Shape::Triangle,
+                Shape::Circle,
+            ],
+            is_boss_wave: false,
+        },
+        8 => WaveConfig {
+            enemies: vec![
+                Shape::Square,
+                Shape::Square,
+                Shape::Triangle,
+                Shape::Triangle,
+                Shape::Circle,
+                Shape::Circle,
+            ],
+            is_boss_wave: false,
+        },
+        9 => WaveConfig {
+            enemies: vec![
+                Shape::Triangle,
+                Shape::Triangle,
+                Shape::Triangle,
+                Shape::Circle,
+                Shape::Circle,
+            ],
+            is_boss_wave: false,
+        },
+        10 => WaveConfig {
+            enemies: vec![
+                Shape::Square,
+                Shape::Square,
+                Shape::Square,
+                Shape::Triangle,
+                Shape::Triangle,
+                Shape::Circle,
+                Shape::Circle,
+            ],
+            is_boss_wave: false,
+        },
+        11 => WaveConfig {
+            enemies: vec![
+                Shape::Triangle,
+                Shape::Triangle,
+                Shape::Triangle,
+                Shape::Circle,
+                Shape::Circle,
+                Shape::Circle,
+            ],
+            is_boss_wave: false,
+        },
+        12 => WaveConfig {
+            // Boss Circle escorted by two normal-scaled Triangles.
+            enemies: vec![Shape::Circle, Shape::Triangle, Shape::Triangle],
+            is_boss_wave: true,
+        },
         _ => WaveConfig {
             enemies: vec![],
             is_boss_wave: false,
@@ -70,5 +132,26 @@ mod tests {
         let wave6 = get_wave_config(6);
         assert_eq!(wave6.enemies.len(), 1);
         assert!(wave6.is_boss_wave);
+    }
+
+    #[test]
+    fn waves_seven_through_twelve_exist() {
+        let expected_counts = [(7, 5), (8, 6), (9, 5), (10, 7), (11, 6), (12, 3)];
+        for (wave, count) in expected_counts {
+            assert_eq!(
+                get_wave_config(wave).enemies.len(),
+                count,
+                "wave {} enemy count",
+                wave
+            );
+        }
+        assert!(get_wave_config(6).is_boss_wave);
+        assert!(get_wave_config(12).is_boss_wave);
+        assert!(!get_wave_config(11).is_boss_wave);
+    }
+
+    #[test]
+    fn final_wave_is_twelve() {
+        assert_eq!(FINAL_WAVE, 12);
     }
 }

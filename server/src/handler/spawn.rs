@@ -1,7 +1,7 @@
 use crate::model::components::{
     AttackRange, AttackStats, AttackTimer, Boss, Bounty, CollisionRadius, DefenseSpecialty,
     DefenseStats, Enemy, Health, HomePosition, King, PlayerIdComponent, Position, Resistances,
-    ShapeComponent, TargetPositions, Worker, WorkerState,
+    ShapeComponent, TargetPositions, Tower, Worker, WorkerState,
 };
 use crate::model::king_config::{
     KING_BASE_DAMAGE, KING_BASE_HP, KING_BASE_RANGE, KING_BASE_RATE, KING_COLLISION_RADIUS,
@@ -17,7 +17,9 @@ pub fn spawn_enemy(world: &mut World, pos: Position, shape: Shape, wave: u32) ->
     let profile = get_unit_profile(shape);
     let scaling_multiplier = crate::handler::wave::get_scaling_multiplier(wave);
 
-    let is_boss = wave == 6;
+    // Boss rule: the Circle on a boss wave is the boss; escorts (non-Circle
+    // shapes on wave 12) get normal wave scaling.
+    let is_boss = matches!(wave, 6 | 12) && shape == Shape::Circle;
     let (hp_multiplier, damage_multiplier) = if is_boss {
         (BOSS_HEALTH_MULTIPLIER, BOSS_DAMAGE_MULTIPLIER)
     } else {
@@ -83,7 +85,12 @@ pub fn spawn_sent_enemy(
     let scaling_multiplier = crate::handler::wave::get_scaling_multiplier(wave);
 
     let final_health = DEFAULT_HEALTH * scaling_multiplier * sent_profile.health_multiplier;
-    let final_damage = profile.combat.primary.damage * scaling_multiplier;
+    let damage_mult = match shape {
+        Shape::Square => crate::model::unit_config::SENT_SQUARE_DAMAGE_MULT,
+        Shape::Triangle => crate::model::unit_config::SENT_TRIANGLE_DAMAGE_MULT,
+        Shape::Circle => crate::model::unit_config::SENT_CIRCLE_DAMAGE_MULT,
+    };
+    let final_damage = profile.combat.primary.damage * scaling_multiplier * damage_mult;
 
     world
         .spawn((
@@ -125,6 +132,7 @@ pub fn spawn_unit(world: &mut World, pos: Position, shape: Shape, player_id: i64
         HomePosition(pos),
         ShapeComponent(shape),
         PlayerIdComponent(player_id),
+        Tower,
         CollisionRadius(profile.radius),
         AttackRange(profile.combat.primary.range),
         Health {
@@ -507,5 +515,34 @@ mod tests {
 
         assert!((health.max - expected_health).abs() < 0.1);
         assert!((stats.damage - expected_damage).abs() < 0.1);
+    }
+
+    #[test]
+    fn wave_12_circle_is_boss_but_triangle_escort_is_not() {
+        use crate::handler::wave::get_scaling_multiplier;
+        let mut world = World::new();
+        let boss = spawn_enemy(
+            &mut world,
+            Position { x: 100.0, y: 30.0 },
+            Shape::Circle,
+            12,
+        );
+        let escort = spawn_enemy(
+            &mut world,
+            Position { x: 140.0, y: 30.0 },
+            Shape::Triangle,
+            12,
+        );
+        let mult = get_scaling_multiplier(12);
+
+        let boss_hp = world.get::<Health>(boss).unwrap().max;
+        assert!((boss_hp - DEFAULT_HEALTH * mult * BOSS_HEALTH_MULTIPLIER).abs() < 0.5);
+
+        let escort_hp = world.get::<Health>(escort).unwrap().max;
+        assert!(
+            (escort_hp - DEFAULT_HEALTH * mult).abs() < 0.5,
+            "escort gets normal scaling only"
+        );
+        let _ = world.get::<AttackStats>(escort);
     }
 }

@@ -29,13 +29,11 @@ pub fn update_king_targeting(world: &mut World) {
 
     // Clear stale targets on kings (target entity was despawned or marked Dead)
     let stale_king_targets: Vec<Entity> = {
-        let mut query =
-            world.query_filtered::<(Entity, &Target), With<King>>();
+        let mut query = world.query_filtered::<(Entity, &Target), With<King>>();
         query
             .iter(world)
             .filter(|(_, target)| {
-                !world.entities().contains(target.0)
-                    || world.get::<Dead>(target.0).is_some()
+                !world.entities().contains(target.0) || world.get::<Dead>(target.0).is_some()
             })
             .map(|(e, _)| e)
             .collect()
@@ -91,7 +89,8 @@ pub fn update_king_targeting(world: &mut World) {
 pub fn update_king_attack_range(world: &mut World) {
     // Collect (king_entity, king_pos, attack_range, target_entity)
     let kings: Vec<(Entity, Position, f32, Option<Entity>)> = {
-        let mut q = world.query_filtered::<(Entity, &Position, &AttackRange, Option<&Target>), With<King>>();
+        let mut q = world
+            .query_filtered::<(Entity, &Position, &AttackRange, Option<&Target>), With<King>>();
         q.iter(world)
             .map(|(e, pos, range, target)| (e, *pos, range.0, target.map(|t| t.0)))
             .collect()

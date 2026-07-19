@@ -33,6 +33,11 @@ pub struct Boss;
 #[derive(Component)]
 pub struct Worker;
 
+/// Marks a player-placed defensive unit (tower). Used to query player
+/// structures directly instead of excluding every other entity kind.
+#[derive(Component)]
+pub struct Tower;
+
 #[derive(Component)]
 pub struct Dead;
 
