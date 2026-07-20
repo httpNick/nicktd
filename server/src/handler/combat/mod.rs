@@ -456,8 +456,7 @@ pub fn update_mana(mut query: Query<&mut Mana>, time: Res<DeltaTime>) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::handler::worker::{CART_POSITIONS, VEIN_POSITIONS};
-    use crate::model::components::{AttackProfile, DamageType, TargetPositions};
+    use crate::model::components::{AttackProfile, DamageType};
     use crate::model::shape::Shape;
     use crate::model::unit_config::{DEFAULT_ATTACK_RANGE, FIREBALL_MANA_COST, MAGE_MELEE_DAMAGE};
 
