@@ -233,13 +233,12 @@ pub fn update_combat_reset(world: &mut World) {
     }
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::handler::combat::{update_attack_range_markers, update_leaked_creeps};
     use crate::model::components::InAttackRange;
     use crate::model::shape::Shape;
-    use crate::handler::combat::{update_attack_range_markers, update_leaked_creeps};
 
     #[test]
     fn range_aware_movement_stops_at_range() {
@@ -924,5 +923,4 @@ mod tests {
             attacking_enemies
         );
     }
-
 }

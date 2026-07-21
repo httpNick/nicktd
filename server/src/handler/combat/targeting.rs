@@ -1,4 +1,4 @@
-use super::{get_board, LEAK_GOLD_PENALTY, LEAK_PENALTY_WAVE_CAP};
+use super::{LEAK_GOLD_PENALTY, LEAK_PENALTY_WAVE_CAP, get_board};
 use crate::model::components::{
     AttackRange, Dead, Enemy, InAttackRange, King, Position, Target, Tower,
 };
