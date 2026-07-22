@@ -70,7 +70,7 @@ export class KingUpgradePanel {
         this.show();
 
         this.titleEl.textContent = `King - Tier ${state.currentTier}`;
-        this.hpEl.textContent = `HP: ${state.currentHp} / ${state.maxHp}`;
+        this.hpEl.textContent = `HP: ${Math.round(state.currentHp)} / ${Math.round(state.maxHp)}`;
 
         const MAX_TIER = 4;
         if (state.currentTier >= MAX_TIER) {
