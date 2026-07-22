@@ -1,9 +1,10 @@
 import { initRenderer, RendererHandle, ClickHit } from './renderer';
-import { Unit, Player, CombatEvent, SendUnitCatalogEntry, DamageType } from './types';
+import { Unit, Player, CombatEvent, SendUnitCatalogEntry, DamageType, BuildCatalogEntry, Family, UnitKind } from './types';
 import { applyThemeToDom } from './theme';
 import { UnitInfoPanel } from './unit_info_panel';
-import { MercenaryPanel, UnitKind } from './mercenary_panel';
+import { MercenaryPanel } from './mercenary_panel';
 import { KingUpgradePanel } from './king_upgrade_panel';
+import { renderBuildShop, renderFamilyOptions } from './app_build_ui';
 
 // --- TYPES & INTERFACES ---
 interface UnitStaticInfo {
@@ -58,6 +59,8 @@ type ServerMessage =
     | { type: 'Queued' }
     | { type: 'MatchFound' }
     | { type: 'SendUnitCatalog'; data: SendUnitCatalogEntry[] }
+    | { type: 'FamilyOptions'; data: Family[] }
+    | { type: 'BuildCatalog'; data: BuildCatalogEntry[] }
     | { type: 'GameState'; data: GameState }
     | { type: 'GameStateDelta'; data: GameStateDelta }
     | { type: 'CombatEvents'; data: CombatEvent[] }
@@ -93,10 +96,12 @@ const gameTimerEl = document.getElementById('game-timer') as HTMLSpanElement;
 const goldDisplay = document.getElementById('gold-display') as HTMLSpanElement;
 const livesDisplay = document.getElementById('lives-display') as HTMLSpanElement;
 const hireWorkerBtn = document.getElementById('hire-worker-btn') as HTMLButtonElement;
+const familyPickEl = document.getElementById('family-pick') as HTMLDivElement;
+const buildShopEl = document.getElementById('build-shop') as HTMLDivElement;
 
 const WORKER_CAP = 7;
 
-let selectedShape: UnitKind = 'Square';
+let selectedUnitKind: UnitKind | null = null;
 let unitMap = new Map<number, Unit>();
 let lastSeq = -1;
 let currentPlayers: Player[] = [];
@@ -246,6 +251,19 @@ function connectAndShowLobby() {
             case 'SendUnitCatalog':
                 mercPanel.setCatalog(serverMsg.data);
                 break;
+            case 'FamilyOptions':
+                renderFamilyOptions(familyPickEl, serverMsg.data, (family) => {
+                    if (socket && socket.readyState === WebSocket.OPEN) {
+                        socket.send(JSON.stringify({ action: 'pickFamily', payload: { family } }));
+                    }
+                });
+                break;
+            case 'BuildCatalog':
+                familyPickEl.innerHTML = '';
+                renderBuildShop(buildShopEl, serverMsg.data, (unitKind) => {
+                    selectedUnitKind = unitKind;
+                });
+                break;
             case 'GameState':
                 if (!isInGame) return;
                 if (gameView.style.display === 'none') showGameView();
@@ -385,7 +403,7 @@ function updateGameOverOverlay(winnerId: number | null) {
         gameOverOverlay.style.display = 'flex';
         mercPanel.hide();
         kingUpgradePanel.hide();
-        selectedShape = 'Square';
+        selectedUnitKind = null;
     } else if (gamePhase === 'Victory') {
         gameResultTitle.textContent = 'Victory!';
         gameResultTitle.className = 'victory';
@@ -393,7 +411,7 @@ function updateGameOverOverlay(winnerId: number | null) {
         gameOverOverlay.style.display = 'flex';
         mercPanel.hide();
         kingUpgradePanel.hide();
-        selectedShape = 'Square';
+        selectedUnitKind = null;
     } else {
         gameOverOverlay.style.display = 'none';
     }
@@ -452,9 +470,6 @@ function handleCombatEvents(events: CombatEvent[]) {
 }
 
 // --- ONE-TIME EVENT REGISTRATION ---
-document.getElementById('selectSquare')!.onclick = () => { selectedShape = 'Square'; };
-document.getElementById('selectCircle')!.onclick = () => { selectedShape = 'Circle'; };
-document.getElementById('selectTriangle')!.onclick = () => { selectedShape = 'Triangle'; };
 hireWorkerBtn.onclick = () => {
     if (socket && socket.readyState === WebSocket.OPEN) {
         socket.send(JSON.stringify({ action: 'hireWorker', payload: {} }));
@@ -486,7 +501,8 @@ renderer.onClick((hit: ClickHit) => {
         case 'cell': {
             panel.clearSelection();
             if (hit.row >= 8) return; // king protection zone — no placement
-            const placeMessage = { action: 'place', payload: { shape: selectedShape, row: hit.row, col: hit.col } };
+            if (!selectedUnitKind) return; // no family/tower picked yet
+            const placeMessage = { action: 'place', payload: { shape: selectedUnitKind, row: hit.row, col: hit.col } };
             if (socket && socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify(placeMessage));
             return;
         }

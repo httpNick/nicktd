@@ -1,6 +1,15 @@
+export type UnitKind = 'Square' | 'Circle' | 'Triangle';
+export type Family = 'Basic';
+
+export interface BuildCatalogEntry {
+    unit_kind: UnitKind;
+    name: string;
+    cost: number;
+}
+
 export interface Unit {
     id: number;
-    shape: 'Square' | 'Circle' | 'Triangle';
+    shape: UnitKind;
     x: number;
     y: number;
     owner_id: number;
@@ -20,7 +29,8 @@ export interface Player {
     gold: number;
     income: number;
     king_tier: number;
-    spawning_queue: ('Square' | 'Circle' | 'Triangle')[];
+    family: Family | null;
+    spawning_queue: UnitKind[];
     next_send_costs: number[];
 }
 
