@@ -1,4 +1,5 @@
 use super::components::{DamageType, Position};
+use super::family::Family;
 use super::game_state::GamePhase;
 use super::player::Player;
 use super::unit_kind::UnitKind;
@@ -42,6 +43,9 @@ pub enum ClientMessage {
     RequestFullState,
     JoinQueue,
     LeaveQueue,
+    PickFamily {
+        family: Family,
+    },
 }
 
 #[derive(Serialize, Clone, Debug, PartialEq)]
@@ -121,6 +125,17 @@ pub struct SendUnitCatalogEntry {
     pub bounty: u32,
 }
 
+/// One entry in the server-sent build catalog for the picking player's
+/// family. Sent as `ServerMessage::BuildCatalog` right after a successful
+/// `PickFamily`. The client builds its shop buttons purely from this list —
+/// adding a tower to a family requires no client change.
+#[derive(Serialize, Clone, Debug)]
+pub struct BuildCatalogEntry {
+    pub unit_kind: UnitKind,
+    pub name: &'static str,
+    pub cost: u32,
+}
+
 #[derive(Serialize, Clone, Debug)]
 #[serde(tag = "type", content = "data")]
 pub enum ServerMessage {
@@ -137,6 +152,11 @@ pub enum ServerMessage {
     /// Server-driven mercenary send catalog, sent once right after
     /// `MatchFound`. Order matches `Player::next_send_costs` by index.
     SendUnitCatalog(Vec<SendUnitCatalogEntry>),
+    /// Families the player may pick from, sent once right after `MatchFound`.
+    FamilyOptions(Vec<Family>),
+    /// Server-driven build catalog for the picking player's chosen family,
+    /// sent once in reply to a successful `PickFamily`.
+    BuildCatalog(Vec<BuildCatalogEntry>),
 }
 
 #[cfg(test)]
@@ -315,6 +335,39 @@ mod tests {
             serde_json::to_string(&ServerMessage::MatchFound).unwrap(),
             r#"{"type":"MatchFound"}"#
         );
+    }
+
+    #[test]
+    fn deserialize_pick_family() {
+        use crate::model::family::Family;
+        let json = r#"{"action":"pickFamily","payload":{"family":"Basic"}}"#;
+        let msg: ClientMessage = serde_json::from_str(json).unwrap();
+        match msg {
+            ClientMessage::PickFamily { family } => assert_eq!(family, Family::Basic),
+            _ => panic!("Wrong message type"),
+        }
+    }
+
+    #[test]
+    fn serialize_family_options() {
+        use crate::model::family::Family;
+        let msg = ServerMessage::FamilyOptions(vec![Family::Basic]);
+        let json = serde_json::to_string(&msg).unwrap();
+        assert_eq!(json, r#"{"type":"FamilyOptions","data":["Basic"]}"#);
+    }
+
+    #[test]
+    fn serialize_build_catalog() {
+        let msg = ServerMessage::BuildCatalog(vec![BuildCatalogEntry {
+            unit_kind: UnitKind::Square,
+            name: "Square",
+            cost: 25,
+        }]);
+        let json = serde_json::to_string(&msg).unwrap();
+        assert!(json.starts_with(r#"{"type":"BuildCatalog","data":["#));
+        assert!(json.contains(r#""unit_kind":"Square""#));
+        assert!(json.contains(r#""name":"Square""#));
+        assert!(json.contains(r#""cost":25"#));
     }
 
     #[test]

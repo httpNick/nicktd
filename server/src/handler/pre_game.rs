@@ -49,6 +49,11 @@ pub async fn pre_game_loop(
                                         ServerMessage::SendUnitCatalog(unit_config::send_unit_catalog()),
                                     )
                                     .await;
+                                    let _ = send_message(
+                                        ws_sender,
+                                        ServerMessage::FamilyOptions(unit_config::family_catalog_options()),
+                                    )
+                                    .await;
                                     return PreGameLoopResult::Joined(match_id);
                                 }
                                 JoinQueueOutcome::Waiting(mut match_rx) => {
@@ -70,6 +75,11 @@ pub async fn pre_game_loop(
                                                         let _ = send_message(
                                                             ws_sender,
                                                             ServerMessage::SendUnitCatalog(unit_config::send_unit_catalog()),
+                                                        )
+                                                        .await;
+                                                        let _ = send_message(
+                                                            ws_sender,
+                                                            ServerMessage::FamilyOptions(unit_config::family_catalog_options()),
                                                         )
                                                         .await;
                                                         return PreGameLoopResult::Joined(match_id);

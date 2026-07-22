@@ -69,6 +69,7 @@ pub fn try_sell_entity(
 
 /// Result of handling one client message. Direct replies are returned (not sent)
 /// so the caller can release the lobby lock before any network `await`.
+#[derive(Debug)]
 pub enum MessageOutcome {
     /// Send this message to the requesting client (after unlocking the lobby).
     Reply(crate::model::messages::ServerMessage),
@@ -91,6 +92,28 @@ pub fn handle_client_message(
     use crate::model::messages::ServerMessage;
 
     match msg {
+        ClientMessage::PickFamily { family } => {
+            let player_idx = lobby.players.iter().position(|p| p.id == player_id);
+            let Some(idx) = player_idx else {
+                return MessageOutcome::Ignored;
+            };
+            if lobby.players[idx].family.is_some() {
+                return MessageOutcome::Reply(ServerMessage::Error(
+                    "Family already locked for this match.".into(),
+                ));
+            }
+            lobby.players[idx].family = Some(family);
+            lobby.broadcast_changes();
+            let catalog = crate::model::unit_config::family_catalog(family)
+                .into_iter()
+                .map(|unit_kind| crate::model::messages::BuildCatalogEntry {
+                    unit_kind,
+                    name: crate::model::unit_config::unit_kind_name(unit_kind),
+                    cost: crate::model::unit_config::get_unit_profile(unit_kind).gold_cost,
+                })
+                .collect();
+            MessageOutcome::Reply(ServerMessage::BuildCatalog(catalog))
+        }
         ClientMessage::Place(p) => {
             if lobby.game_state.phase != GamePhase::Build {
                 return MessageOutcome::Reply(ServerMessage::Error(
@@ -103,6 +126,20 @@ pub fn handle_client_message(
             let Some(idx) = player_idx else {
                 return MessageOutcome::Ignored;
             };
+            match lobby.players[idx].family {
+                None => {
+                    return MessageOutcome::Reply(ServerMessage::Error(
+                        "Pick a family before building.".into(),
+                    ));
+                }
+                Some(family) => {
+                    if !crate::model::unit_config::family_catalog(family).contains(&p.shape) {
+                        return MessageOutcome::Reply(ServerMessage::Error(
+                            "That unit isn't in your family.".into(),
+                        ));
+                    }
+                }
+            }
             if p.row >= KING_PLACEMENT_ROW_LIMIT || p.col >= 10 {
                 return MessageOutcome::Reply(ServerMessage::Error(
                     "Invalid placement coordinates.".into(),
@@ -642,6 +679,13 @@ mod tests {
 
         let mut lobby = Lobby::new();
         lobby.players.push(Player::new(1, "p1".into(), 100));
+        handle_client_message(
+            &mut lobby,
+            1,
+            ClientMessage::PickFamily {
+                family: crate::model::family::Family::Basic,
+            },
+        );
         let msg = ClientMessage::Place(PlaceMessage {
             shape: UnitKind::Square,
             row: 1,
@@ -662,6 +706,13 @@ mod tests {
 
         let mut lobby = Lobby::new();
         lobby.players.push(Player::new(1, "p1".into(), 200));
+        handle_client_message(
+            &mut lobby,
+            1,
+            ClientMessage::PickFamily {
+                family: crate::model::family::Family::Basic,
+            },
+        );
         let msg = ClientMessage::Place(PlaceMessage {
             shape: UnitKind::Square,
             row: 1,
@@ -687,6 +738,86 @@ mod tests {
             lobby.players[0].gold, 175,
             "second placement must not charge gold"
         );
+    }
+
+    #[test]
+    fn place_rejected_without_family_picked() {
+        use crate::model::messages::{ClientMessage, PlaceMessage, ServerMessage};
+
+        let mut lobby = Lobby::new();
+        lobby.players.push(Player::new(1, "p1".into(), 100));
+        lobby.players.push(Player::new(2, "p2".into(), 100));
+
+        let player_id = lobby.players[0].id;
+        let msg = ClientMessage::Place(PlaceMessage {
+            shape: UnitKind::Square,
+            row: 0,
+            col: 0,
+        });
+        let outcome = handle_client_message(&mut lobby, player_id, msg);
+        match outcome {
+            MessageOutcome::Reply(ServerMessage::Error(e)) => {
+                assert!(e.contains("family"), "expected family error, got: {e}");
+            }
+            other => panic!("expected family-required error, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn pick_family_locks_and_rejects_second_pick() {
+        use crate::model::family::Family;
+        use crate::model::messages::{ClientMessage, ServerMessage};
+
+        let mut lobby = Lobby::new();
+        lobby.players.push(Player::new(1, "p1".into(), 100));
+        lobby.players.push(Player::new(2, "p2".into(), 100));
+        let player_id = lobby.players[0].id;
+
+        let first = handle_client_message(
+            &mut lobby,
+            player_id,
+            ClientMessage::PickFamily { family: Family::Basic },
+        );
+        assert!(matches!(
+            first,
+            MessageOutcome::Reply(ServerMessage::BuildCatalog(_))
+        ));
+        assert_eq!(lobby.players[0].family, Some(Family::Basic));
+
+        let second = handle_client_message(
+            &mut lobby,
+            player_id,
+            ClientMessage::PickFamily { family: Family::Basic },
+        );
+        match second {
+            MessageOutcome::Reply(ServerMessage::Error(e)) => {
+                assert!(e.contains("locked") || e.contains("already"));
+            }
+            other => panic!("expected already-locked error, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn place_succeeds_after_family_picked() {
+        use crate::model::family::Family;
+        use crate::model::messages::{ClientMessage, PlaceMessage};
+
+        let mut lobby = Lobby::new();
+        lobby.players.push(Player::new(1, "p1".into(), 100));
+        lobby.players.push(Player::new(2, "p2".into(), 100));
+        let player_id = lobby.players[0].id;
+        handle_client_message(
+            &mut lobby,
+            player_id,
+            ClientMessage::PickFamily { family: Family::Basic },
+        );
+        let msg = ClientMessage::Place(PlaceMessage {
+            shape: UnitKind::Square,
+            row: 0,
+            col: 0,
+        });
+        let outcome = handle_client_message(&mut lobby, player_id, msg);
+        assert!(matches!(outcome, MessageOutcome::Handled));
     }
 
     #[test]

@@ -1,6 +1,7 @@
 use bevy_ecs::prelude::Resource;
 use serde::Serialize;
 
+use crate::model::family::Family;
 use crate::model::unit_kind::UnitKind;
 
 /// ECS Resource wrapping the lobby's player list so systems can read and award gold.
@@ -27,6 +28,8 @@ pub struct Player {
     pub next_send_costs: [u32; 3],
     /// Number of creeps this player's board has leaked this wave; resets each wave.
     pub leaks_this_wave: u32,
+    /// Family locked in for this match on first `PickFamily`; `None` until picked.
+    pub family: Option<Family>,
 }
 
 impl Player {
@@ -41,6 +44,7 @@ impl Player {
             sends_this_wave: [0; 3],
             next_send_costs: [0; 3],
             leaks_this_wave: 0,
+            family: None,
         };
         player.refresh_send_costs(1);
         player
@@ -77,6 +81,12 @@ impl Player {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn new_player_has_no_family_picked() {
+        let player = Player::new(1, "test".to_string(), 100);
+        assert_eq!(player.family, None);
+    }
 
     #[test]
     fn player_new_initialises_king_tier_to_zero() {

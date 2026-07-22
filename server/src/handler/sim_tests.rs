@@ -3,6 +3,7 @@ use crate::handler::game_loop::{build_main_schedule, run_tick, TICK_RATE};
 use crate::handler::in_game::handle_client_message;
 use crate::model::game_state::GamePhase;
 use crate::model::lobby::Lobby;
+use crate::model::family::Family;
 use crate::model::messages::{ClientMessage, PlaceMessage};
 use crate::model::player::Player;
 use crate::model::unit_kind::UnitKind;
@@ -53,6 +54,8 @@ fn wave_one_all_in_rush_is_survivable_and_net_negative() {
     // A few build ticks so workers/kings spawn.
     ticks(&mut lobby, &mut schedule, 5);
     assert_eq!(lobby.game_state.phase, GamePhase::Build);
+    handle_client_message(&mut lobby, R, ClientMessage::PickFamily { family: Family::Basic });
+    handle_client_message(&mut lobby, D, ClientMessage::PickFamily { family: Family::Basic });
 
     // Rusher: max Scouts + one tower with the leftovers.
     loop {
@@ -143,6 +146,7 @@ fn full_clean_game_reaches_victory_at_wave_12() {
     let mut schedule = build_main_schedule();
     ticks(&mut lobby, &mut schedule, 5);
     for player in [1i64, 2] {
+        handle_client_message(&mut lobby, player, ClientMessage::PickFamily { family: Family::Basic });
         for col in [2u32, 4, 6, 8] {
             handle_client_message(
                 &mut lobby,
@@ -240,6 +244,7 @@ fn symmetric_builds_produce_symmetric_outcomes() {
     let mut schedule = build_main_schedule();
     ticks(&mut lobby, &mut schedule, 5);
     for player in [1i64, 2] {
+        handle_client_message(&mut lobby, player, ClientMessage::PickFamily { family: Family::Basic });
         for col in [2u32, 4, 6, 8] {
             handle_client_message(
                 &mut lobby,
@@ -295,6 +300,8 @@ fn sustained_scout_spam_does_not_beat_static_defense() {
     lobby.players.push(Player::new(D, "static".into(), 100));
     let mut schedule = build_main_schedule();
     ticks(&mut lobby, &mut schedule, 5);
+    handle_client_message(&mut lobby, R, ClientMessage::PickFamily { family: Family::Basic });
+    handle_client_message(&mut lobby, D, ClientMessage::PickFamily { family: Family::Basic });
 
     // Defender: 4 Squares, wave 1, then nothing forever.
     for col in [2u32, 4, 6, 8] {
