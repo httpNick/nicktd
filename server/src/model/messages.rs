@@ -252,7 +252,7 @@ mod tests {
             attack_damage: Some(10.0),
             attack_rate: Some(0.8),
             attack_range: Some(150.0),
-            damage_type: Some(DamageType::FireMagical),
+            damage_type: Some(DamageType::FIRE_MAGICAL),
             armor: None,
             is_boss: false,
             sell_value: Some(56),
@@ -263,7 +263,7 @@ mod tests {
         assert!(json.contains("\"attack_damage\":10.0"));
         assert!(json.contains("\"attack_rate\":0.8"));
         assert!(json.contains("\"attack_range\":150.0"));
-        assert!(json.contains("\"damage_type\":\"FireMagical\""));
+        assert!(json.contains("\"damage_type\":{\"school\":\"Magical\",\"element\":\"Fire\"}"));
         assert!(json.contains("\"armor\":null"));
         assert!(json.contains("\"is_boss\":false"));
         assert!(json.contains("\"sell_value\":56"));
@@ -274,7 +274,7 @@ mod tests {
         let event = CombatEvent {
             attacker_id: 1,
             target_id: 2,
-            attack_type: DamageType::FireMagical,
+            attack_type: DamageType::FIRE_MAGICAL,
             start_pos: Position { x: 10.0, y: 10.0 },
             end_pos: Position { x: 20.0, y: 20.0 },
         };
@@ -287,7 +287,7 @@ mod tests {
         assert!(json.contains("\"data\":["));
         // Check specific fields
         assert!(json.contains("\"attacker_id\":1"));
-        assert!(json.contains("\"attack_type\":\"FireMagical\""));
+        assert!(json.contains("\"attack_type\":{\"school\":\"Magical\",\"element\":\"Fire\"}"));
         assert!(json.contains("\"x\":10.0"));
     }
 

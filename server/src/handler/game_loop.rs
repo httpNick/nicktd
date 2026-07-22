@@ -432,7 +432,7 @@ mod tests {
             .write(CombatEvent {
                 attacker_id: 1,
                 target_id: 2,
-                attack_type: DamageType::PhysicalBasic,
+                attack_type: DamageType::PHYSICAL_BASIC,
                 start_pos: Position { x: 0.0, y: 0.0 },
                 end_pos: Position { x: 10.0, y: 0.0 },
             });
@@ -468,7 +468,7 @@ mod tests {
             .write(CombatEvent {
                 attacker_id: 1,
                 target_id: 2,
-                attack_type: DamageType::PhysicalBasic,
+                attack_type: DamageType::PHYSICAL_BASIC,
                 start_pos: Position { x: 0.0, y: 0.0 },
                 end_pos: Position { x: 10.0, y: 0.0 },
             });
@@ -1388,7 +1388,7 @@ mod tests {
             .write(CombatEvent {
                 attacker_id: 1,
                 target_id: 2,
-                attack_type: DamageType::PhysicalBasic,
+                attack_type: DamageType::PHYSICAL_BASIC,
                 start_pos: Position { x: 0.0, y: 0.0 },
                 end_pos: Position { x: 10.0, y: 0.0 },
             });
