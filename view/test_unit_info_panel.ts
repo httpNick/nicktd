@@ -114,7 +114,7 @@ function makeStaticInfo(overrides: Partial<UnitStaticInfo> = {}): UnitStaticInfo
         attack_damage: 10,
         attack_rate: 0.8,
         attack_range: 150,
-        damage_type: 'FireMagical',
+        damage_type: { school: 'Magical', element: 'Fire' },
         armor: null,
         is_boss: false,
         sell_value: 56,
@@ -269,10 +269,10 @@ test('UnitInfoPanel', async (t) => {
         panel.applyStaticInfo(makeStaticInfo({
             entity_id: 42,
             attack_damage: 10,
-            damage_type: 'FireMagical',
+            damage_type: { school: 'Magical', element: 'Fire' },
         }));
         assert.ok(statsSection.innerHTML.includes('10'));
-        assert.ok(statsSection.innerHTML.includes('FireMagical'));
+        assert.ok(statsSection.innerHTML.includes('Magical (Fire)'));
     });
 
     await t.test('5.3 applyStaticInfo renders boss indicator when is_boss is true', () => {

@@ -20,7 +20,7 @@ export interface UnitStaticInfo {
     attack_damage: number | null;
     attack_rate: number | null;
     attack_range: number | null;
-    damage_type: 'PhysicalBasic' | 'PhysicalPierce' | 'FireMagical' | null;
+    damage_type: { school: 'PhysicalBasic' | 'PhysicalPierce' | 'Magical'; element: 'None' | 'Fire' | 'Ice' | 'Poison' } | null;
     armor: number | null;
     is_boss: boolean;
     sell_value: number | null;
@@ -246,8 +246,11 @@ export class UnitInfoPanel {
             rows.push(`<div class="stat-row"><span>Rate</span><span>${info.attack_rate.toFixed(2)}/s</span></div>`);
         if (info.attack_range !== null)
             rows.push(`<div class="stat-row"><span>Range</span><span>${info.attack_range}</span></div>`);
-        if (info.damage_type !== null)
-            rows.push(`<div class="stat-row"><span>Type</span><span>${info.damage_type}</span></div>`);
+        if (info.damage_type !== null) {
+            const { school, element } = info.damage_type;
+            const label = element === 'None' ? school : `${school} (${element})`;
+            rows.push(`<div class="stat-row"><span>Type</span><span>${label}</span></div>`);
+        }
         if (info.armor !== null)
             rows.push(`<div class="stat-row"><span>Armor</span><span>${info.armor}</span></div>`);
         if (info.is_boss)

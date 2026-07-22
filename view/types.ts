@@ -29,7 +29,12 @@ export interface Position {
     y: number;
 }
 
-export type DamageType = 'FireMagical' | 'PhysicalPierce' | 'PhysicalBasic';
+export type School = 'PhysicalBasic' | 'PhysicalPierce' | 'Magical';
+export type Element = 'None' | 'Fire' | 'Ice' | 'Poison';
+export interface DamageType {
+    school: School;
+    element: Element;
+}
 
 export interface CombatEvent {
     attacker_id: number;
