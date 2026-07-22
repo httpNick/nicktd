@@ -1,7 +1,8 @@
+use super::apply_damage;
 use super::get_board;
 use crate::model::components::{
-    AttackRange, AttackStats, AttackTimer, Bounty, CombatProfile, Dead, Enemy, Health,
-    InAttackRange, Mana, Position, Target,
+    AttackRange, AttackStats, AttackTimer, Bounty, CombatProfile, Dead, DefenseStats, Enemy,
+    Health, InAttackRange, Mana, Position, Target,
 };
 use crate::model::game_state::DeltaTime;
 use crate::model::messages::CombatEvent;
@@ -139,8 +140,14 @@ fn execute_combat_round(world: &mut World, tick_delta: f32) -> Vec<CombatEvent> 
             end_pos,
         });
 
+        let defense = world
+            .get::<DefenseStats>(target_entity)
+            .copied()
+            .unwrap_or_default();
+        let mitigated = apply_damage(damage, damage_type, &defense);
+
         if let Some(mut health) = world.get_mut::<Health>(target_entity) {
-            health.current -= damage;
+            health.current -= mitigated;
         }
     }
 
@@ -227,14 +234,14 @@ mod tests {
                 AttackStats {
                     damage: 10.0,
                     rate: 1.0,
-                    damage_type: DamageType::PhysicalBasic,
+                    damage_type: DamageType::PHYSICAL_BASIC,
                 }, // 1 attack per second
                 CombatProfile {
                     primary: AttackProfile {
                         damage: 10.0,
                         rate: 1.0,
                         range: DEFAULT_ATTACK_RANGE,
-                        damage_type: DamageType::PhysicalBasic,
+                        damage_type: DamageType::PHYSICAL_BASIC,
                     },
                     secondary: None,
                     mana_cost: 0.0,
@@ -283,6 +290,59 @@ mod tests {
 
         let attacker_timer = world.entity(attacker).get::<AttackTimer>().unwrap();
         assert_eq!(attacker_timer.0, 1.0, "Timer should be reset again");
+    }
+
+    #[test]
+    fn combat_system_mitigates_damage_through_target_defense() {
+        use crate::model::components::{AttackStats, AttackTimer, DefenseStats, Health};
+
+        let mut world = World::new();
+
+        let attacker = world
+            .spawn((
+                InAttackRange,
+                AttackStats {
+                    damage: 10.0,
+                    rate: 1.0,
+                    damage_type: DamageType::PHYSICAL_BASIC,
+                },
+                CombatProfile {
+                    primary: AttackProfile {
+                        damage: 10.0,
+                        rate: 1.0,
+                        range: DEFAULT_ATTACK_RANGE,
+                        damage_type: DamageType::PHYSICAL_BASIC,
+                    },
+                    secondary: None,
+                    mana_cost: 0.0,
+                },
+                AttackTimer(0.0),
+            ))
+            .id();
+
+        // Armored target: 50% physical mitigation.
+        let target = world
+            .spawn((
+                Health {
+                    current: 100.0,
+                    max: 100.0,
+                },
+                DefenseStats {
+                    armor: 0.5,
+                    ..Default::default()
+                },
+            ))
+            .id();
+
+        world.entity_mut(attacker).insert(Target(target));
+
+        execute_combat_round(&mut world, 0.1);
+
+        let target_health = world.entity(target).get::<Health>().unwrap();
+        assert_eq!(
+            target_health.current, 95.0,
+            "50% armor should halve the 10 damage hit to 5"
+        );
     }
 
     #[test]
@@ -509,7 +569,7 @@ mod tests {
                 AttackStats {
                     damage: fireball_damage,
                     rate: 1.0,
-                    damage_type: DamageType::FireMagical,
+                    damage_type: DamageType::FIRE_MAGICAL,
                 },
                 AttackRange(ranged_range),
                 CombatProfile {
@@ -517,13 +577,13 @@ mod tests {
                         damage: fireball_damage,
                         rate: 1.0,
                         range: ranged_range,
-                        damage_type: DamageType::FireMagical,
+                        damage_type: DamageType::FIRE_MAGICAL,
                     },
                     secondary: Some(AttackProfile {
                         damage: melee_damage,
                         rate: 1.0,
                         range: melee_range,
-                        damage_type: DamageType::PhysicalBasic,
+                        damage_type: DamageType::PHYSICAL_BASIC,
                     }),
                     mana_cost: fireball_cost,
                 },
@@ -576,7 +636,7 @@ mod tests {
         let stats = world.entity(mage).get::<AttackStats>().unwrap();
         assert_eq!(
             stats.damage_type,
-            DamageType::PhysicalBasic,
+            DamageType::PHYSICAL_BASIC,
             "Should switch to PhysicalBasic when out of mana"
         );
         assert_eq!(
@@ -605,7 +665,7 @@ mod tests {
         let stats = world.entity(mage).get::<AttackStats>().unwrap();
         assert_eq!(
             stats.damage_type,
-            DamageType::FireMagical,
+            DamageType::FIRE_MAGICAL,
             "Should switch back to FireMagical when mana is sufficient"
         );
         assert_eq!(
@@ -628,7 +688,7 @@ mod tests {
                 AttackStats {
                     damage: 10.0,
                     rate: 1.0,
-                    damage_type: DamageType::PhysicalPierce,
+                    damage_type: DamageType::PHYSICAL_PIERCE,
                 },
                 AttackTimer(0.0),
             ))
@@ -653,7 +713,7 @@ mod tests {
         let event = &events[0];
         assert_eq!(event.attacker_id, attacker.to_bits());
         assert_eq!(event.target_id, target.to_bits());
-        assert_eq!(event.attack_type, DamageType::PhysicalPierce);
+        assert_eq!(event.attack_type, DamageType::PHYSICAL_PIERCE);
         assert_eq!(event.start_pos, Position { x: 0.0, y: 0.0 });
         assert_eq!(event.end_pos, Position { x: 10.0, y: 0.0 });
     }
@@ -680,14 +740,14 @@ mod tests {
                 AttackStats {
                     damage: 10.0,
                     rate: 1.0,
-                    damage_type: DamageType::PhysicalBasic,
+                    damage_type: DamageType::PHYSICAL_BASIC,
                 },
                 CombatProfile {
                     primary: AttackProfile {
                         damage: 10.0,
                         rate: 1.0,
                         range: DEFAULT_ATTACK_RANGE,
-                        damage_type: DamageType::PhysicalBasic,
+                        damage_type: DamageType::PHYSICAL_BASIC,
                     },
                     secondary: None,
                     mana_cost: 0.0,
@@ -721,7 +781,7 @@ mod tests {
         );
         assert_eq!(events[0].attacker_id, attacker.to_bits());
         assert_eq!(events[0].target_id, target.to_bits());
-        assert_eq!(events[0].attack_type, DamageType::PhysicalBasic);
+        assert_eq!(events[0].attack_type, DamageType::PHYSICAL_BASIC);
     }
 
     // --- Task 3: Refactored System Signature Tests ---

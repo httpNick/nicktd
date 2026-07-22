@@ -6,11 +6,9 @@ import { CANVAS_WIDTH, CANVAS_HEIGHT } from '../layout';
 const C = theme.colors;
 
 function attackColor(t: DamageType): number {
-    switch (t) {
-        case 'FireMagical': return hexNum(C.fxFire);
-        case 'PhysicalPierce': return hexNum(C.fxPierce);
-        case 'PhysicalBasic': return hexNum(C.fxBasic);
-    }
+    if (t.element === 'Fire') return hexNum(C.fxFire);
+    if (t.school === 'PhysicalPierce') return hexNum(C.fxPierce);
+    return hexNum(C.fxBasic);
 }
 
 const easeOutQuad = (t: number) => 1 - (1 - t) * (1 - t);
@@ -47,7 +45,7 @@ export class EffectsLayer {
 
     combatEvent(e: CombatEvent): void {
         const color = attackColor(e.attack_type);
-        const ranged = e.attack_type === 'FireMagical' || e.attack_type === 'PhysicalPierce';
+        const ranged = e.attack_type.school === 'Magical' || e.attack_type.school === 'PhysicalPierce';
         if (ranged) {
             this.projectile(e.start_pos, e.end_pos, color, 300);
         } else {

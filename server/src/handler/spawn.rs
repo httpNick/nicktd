@@ -1,7 +1,7 @@
 use crate::model::components::{
-    AttackRange, AttackStats, AttackTimer, Boss, Bounty, CollisionRadius, DefenseSpecialty,
-    DefenseStats, Enemy, Health, HomePosition, King, PlayerIdComponent, Position, Resistances,
-    ShapeComponent, TargetPositions, Tower, Worker, WorkerState,
+    AttackRange, AttackStats, AttackTimer, Boss, Bounty, CollisionRadius, DefenseStats, Enemy,
+    Health, HomePosition, King, PlayerIdComponent, Position, ShapeComponent, TargetPositions,
+    Tower, Worker, WorkerState,
 };
 use crate::model::king_config::{
     KING_BASE_DAMAGE, KING_BASE_HP, KING_BASE_RANGE, KING_BASE_RATE, KING_COLLISION_RADIUS,
@@ -46,15 +46,7 @@ pub fn spawn_enemy(world: &mut World, pos: Position, shape: Shape, wave: u32) ->
             damage_type: profile.combat.primary.damage_type,
         },
         profile.combat,
-        DefenseStats {
-            armor: 0.0,
-            resistances: Resistances {
-                fire: 0.0,
-                ice: 0.0,
-                lightning: 0.0,
-            },
-            specialty: DefenseSpecialty::None,
-        },
+        DefenseStats::default(),
         AttackTimer(0.0),
     ));
 
@@ -110,15 +102,7 @@ pub fn spawn_sent_enemy(
                 damage_type: profile.combat.primary.damage_type,
             },
             profile.combat,
-            DefenseStats {
-                armor: 0.0,
-                resistances: Resistances {
-                    fire: 0.0,
-                    ice: 0.0,
-                    lightning: 0.0,
-                },
-                specialty: DefenseSpecialty::None,
-            },
+            DefenseStats::default(),
             AttackTimer(0.0),
             Bounty(bounty),
         ))
@@ -145,15 +129,7 @@ pub fn spawn_unit(world: &mut World, pos: Position, shape: Shape, player_id: i64
             damage_type: profile.combat.primary.damage_type,
         },
         profile.combat,
-        DefenseStats {
-            armor: 0.0,
-            resistances: Resistances {
-                fire: 0.0,
-                ice: 0.0,
-                lightning: 0.0,
-            },
-            specialty: DefenseSpecialty::None,
-        },
+        DefenseStats::default(),
         AttackTimer(0.0),
     ));
 
@@ -197,8 +173,9 @@ pub fn spawn_king(world: &mut World, player_id: i64, board_idx: usize) -> Entity
             AttackStats {
                 damage: KING_BASE_DAMAGE,
                 rate: KING_BASE_RATE,
-                damage_type: DamageType::PhysicalBasic,
+                damage_type: DamageType::PHYSICAL_BASIC,
             },
+            DefenseStats::default(),
             AttackTimer(0.0),
             AttackRange(KING_BASE_RANGE),
             CollisionRadius(KING_COLLISION_RADIUS),
@@ -222,15 +199,7 @@ pub fn spawn_worker(world: &mut World, player_id: i64, targets: TargetPositions)
                 current: DEFAULT_HEALTH,
                 max: DEFAULT_HEALTH,
             },
-            DefenseStats {
-                armor: 0.0,
-                resistances: Resistances {
-                    fire: 0.0,
-                    ice: 0.0,
-                    lightning: 0.0,
-                },
-                specialty: DefenseSpecialty::None,
-            },
+            DefenseStats::default(),
         ))
         .id()
 }
@@ -305,6 +274,19 @@ mod tests {
         let pos_right = world.entity(king_right).get::<Position>().unwrap();
         assert!((pos_right.x - KING_RIGHT_X).abs() < f32::EPSILON);
         assert!((pos_right.y - KING_Y).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn spawn_king_has_neutral_defense_stats() {
+        use crate::model::components::DefenseStats;
+        let mut world = World::new();
+        let king = spawn_king(&mut world, 1, 0);
+        let defense = world.entity(king).get::<DefenseStats>();
+        assert!(
+            defense.is_some(),
+            "King must carry DefenseStats to be a valid combat target"
+        );
+        assert_eq!(*defense.unwrap(), DefenseStats::default());
     }
 
     #[test]
@@ -384,7 +366,7 @@ mod tests {
         let triangle = spawn_unit(&mut world, Position { x: 0.0, y: 0.0 }, Shape::Triangle, 1);
         let t_stats = world.entity(triangle).get::<AttackStats>().unwrap();
         let t_range = world.entity(triangle).get::<AttackRange>().unwrap();
-        assert_eq!(t_stats.damage_type, DamageType::PhysicalPierce);
+        assert_eq!(t_stats.damage_type, DamageType::PHYSICAL_PIERCE);
         assert!(
             t_range.0 > DEFAULT_ATTACK_RANGE,
             "Triangle should be ranged"
@@ -394,7 +376,7 @@ mod tests {
         let square = spawn_unit(&mut world, Position { x: 0.0, y: 0.0 }, Shape::Square, 1);
         let s_stats = world.entity(square).get::<AttackStats>().unwrap();
         let s_range = world.entity(square).get::<AttackRange>().unwrap();
-        assert_eq!(s_stats.damage_type, DamageType::PhysicalBasic);
+        assert_eq!(s_stats.damage_type, DamageType::PHYSICAL_BASIC);
         assert!(s_range.0 <= DEFAULT_ATTACK_RANGE, "Square should be melee");
 
         // Circle: Fire Mage (Mana + Ranged Fire Magical)
@@ -403,7 +385,7 @@ mod tests {
         let c_range = world.entity(circle).get::<AttackRange>().unwrap();
         let c_mana = world.entity(circle).get::<Mana>();
 
-        assert_eq!(c_stats.damage_type, DamageType::FireMagical);
+        assert_eq!(c_stats.damage_type, DamageType::FIRE_MAGICAL);
         assert!(
             c_range.0 > DEFAULT_ATTACK_RANGE,
             "Circle should be ranged (Mage)"

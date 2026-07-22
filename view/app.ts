@@ -1,5 +1,5 @@
 import { initRenderer, RendererHandle, ClickHit } from './renderer';
-import { Unit, Player, CombatEvent, SendUnitCatalogEntry } from './types';
+import { Unit, Player, CombatEvent, SendUnitCatalogEntry, DamageType } from './types';
 import { applyThemeToDom } from './theme';
 import { UnitInfoPanel } from './unit_info_panel';
 import { MercenaryPanel } from './mercenary_panel';
@@ -11,7 +11,7 @@ interface UnitStaticInfo {
     attack_damage: number | null;
     attack_rate: number | null;
     attack_range: number | null;
-    damage_type: 'PhysicalBasic' | 'PhysicalPierce' | 'FireMagical' | null;
+    damage_type: DamageType | null;
     armor: number | null;
     is_boss: boolean;
     sell_value: number | null;

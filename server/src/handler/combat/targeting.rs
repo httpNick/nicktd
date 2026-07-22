@@ -650,7 +650,7 @@ mod tests {
                 AttackStats {
                     damage: 50.0,
                     rate: 1.0,
-                    damage_type: DamageType::PhysicalBasic,
+                    damage_type: DamageType::PHYSICAL_BASIC,
                 },
                 AttackRange(150.0),
                 AttackTimer(0.0),
