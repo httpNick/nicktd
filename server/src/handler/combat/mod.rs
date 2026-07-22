@@ -1,8 +1,10 @@
 mod attack;
+mod damage;
 mod movement;
 mod targeting;
 
 pub use attack::{cleanup_dead_entities, process_combat, update_active_combat_stats, update_mana};
+pub use damage::apply_damage;
 pub use movement::{update_combat_movement, update_combat_reset};
 pub use targeting::{update_attack_range_markers, update_leaked_creeps, update_targeting};
 
