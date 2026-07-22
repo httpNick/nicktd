@@ -1,6 +1,7 @@
 pub mod account;
 pub mod components;
 pub mod constants;
+pub mod family;
 pub mod game_state;
 pub mod jwt;
 pub mod king_config;

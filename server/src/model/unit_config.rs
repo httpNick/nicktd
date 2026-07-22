@@ -1,4 +1,5 @@
 use super::components::{AttackProfile, CombatProfile, DamageType, Mana};
+use super::family::Family;
 use super::unit_kind::UnitKind;
 
 // --- Balance Constants ---
@@ -210,6 +211,30 @@ pub fn send_unit_catalog() -> Vec<crate::model::messages::SendUnitCatalogEntry> 
         .collect()
 }
 
+/// Display name for a unit kind, used in the client build-catalog message.
+pub fn unit_kind_name(kind: UnitKind) -> &'static str {
+    match kind {
+        UnitKind::Square => "Square",
+        UnitKind::Triangle => "Triangle",
+        UnitKind::Circle => "Circle",
+    }
+}
+
+/// The buildable `UnitKind`s for a given family. Single source of truth for
+/// family→roster: `Place` validation and the server-sent build catalog both
+/// read this, so adding a family later only touches this one match arm.
+pub fn family_catalog(family: Family) -> Vec<UnitKind> {
+    match family {
+        Family::Basic => vec![UnitKind::Square, UnitKind::Triangle, UnitKind::Circle],
+    }
+}
+
+/// All families a player may currently pick from (sent to the client right
+/// after `MatchFound` as `ServerMessage::FamilyOptions`).
+pub fn family_catalog_options() -> Vec<Family> {
+    vec![Family::Basic]
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -349,5 +374,28 @@ mod tests {
             assert_eq!(entry.income, profile.income);
             assert_eq!(entry.bounty, profile.bounty);
         }
+    }
+
+    #[test]
+    fn family_catalog_basic_has_all_three_shapes() {
+        use crate::model::family::Family;
+        let catalog = family_catalog(Family::Basic);
+        assert_eq!(catalog.len(), 3);
+        assert!(catalog.contains(&UnitKind::Square));
+        assert!(catalog.contains(&UnitKind::Triangle));
+        assert!(catalog.contains(&UnitKind::Circle));
+    }
+
+    #[test]
+    fn unit_kind_name_is_nonempty_for_all_kinds() {
+        for kind in [UnitKind::Square, UnitKind::Triangle, UnitKind::Circle] {
+            assert!(!unit_kind_name(kind).is_empty());
+        }
+    }
+
+    #[test]
+    fn family_catalog_options_includes_basic() {
+        use crate::model::family::Family;
+        assert!(family_catalog_options().contains(&Family::Basic));
     }
 }
