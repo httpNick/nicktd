@@ -73,26 +73,39 @@ pub struct Health {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
-pub enum DamageType {
-    PhysicalPierce,
+pub enum School {
     PhysicalBasic,
-    FireMagical,
+    PhysicalPierce,
+    Magical,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct Resistances {
-    pub fire: f32,
-    pub ice: f32,
-    pub lightning: f32,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq)]
-#[allow(dead_code)]
-pub enum DefenseSpecialty {
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub enum Element {
     None,
-    Armored,
-    MagicResistant,
-    RangeResistant,
+    Fire,
+    Ice,
+    Poison,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct DamageType {
+    pub school: School,
+    pub element: Element,
+}
+
+impl DamageType {
+    pub const PHYSICAL_BASIC: DamageType = DamageType {
+        school: School::PhysicalBasic,
+        element: Element::None,
+    };
+    pub const PHYSICAL_PIERCE: DamageType = DamageType {
+        school: School::PhysicalPierce,
+        element: Element::None,
+    };
+    pub const FIRE_MAGICAL: DamageType = DamageType {
+        school: School::Magical,
+        element: Element::Fire,
+    };
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -117,11 +130,13 @@ pub struct AttackStats {
     pub damage_type: DamageType,
 }
 
-#[derive(Component, Clone, Copy, Debug, PartialEq)]
+#[derive(Component, Clone, Copy, Debug, PartialEq, Default)]
 pub struct DefenseStats {
     pub armor: f32,
-    pub resistances: Resistances,
-    pub specialty: DefenseSpecialty,
+    pub magic_resist: f32,
+    pub fire: f32,
+    pub ice: f32,
+    pub poison: f32,
 }
 
 #[derive(Component, Clone, Copy, Debug, PartialEq)]
@@ -181,7 +196,7 @@ mod tests {
         let stats = AttackStats {
             damage: 10.0,
             rate: 1.5,
-            damage_type: DamageType::PhysicalBasic,
+            damage_type: DamageType::PHYSICAL_BASIC,
         };
         assert_eq!(stats.damage, 10.0);
         assert_eq!(stats.rate, 1.5);
@@ -195,17 +210,12 @@ mod tests {
 
     #[test]
     fn damage_and_defense_types_exist() {
-        let _ = DamageType::PhysicalPierce;
-        let _ = DamageType::PhysicalBasic;
-        let _ = DamageType::FireMagical;
-
-        let _ = DefenseSpecialty::None;
-        let _ = DefenseSpecialty::Armored;
-        let _ = Resistances {
-            fire: 0.0,
-            ice: 0.0,
-            lightning: 0.0,
-        };
+        let _ = DamageType::PHYSICAL_PIERCE;
+        let _ = DamageType::PHYSICAL_BASIC;
+        let _ = DamageType::FIRE_MAGICAL;
+        assert_eq!(DamageType::FIRE_MAGICAL.school, School::Magical);
+        assert_eq!(DamageType::FIRE_MAGICAL.element, Element::Fire);
+        assert_eq!(DamageType::PHYSICAL_BASIC.element, Element::None);
     }
 
     #[test]
@@ -213,25 +223,32 @@ mod tests {
         let stats = AttackStats {
             damage: 10.0,
             rate: 1.5,
-            damage_type: DamageType::PhysicalBasic,
+            damage_type: DamageType::PHYSICAL_BASIC,
         };
-        assert_eq!(stats.damage_type, DamageType::PhysicalBasic);
+        assert_eq!(stats.damage_type, DamageType::PHYSICAL_BASIC);
     }
 
     #[test]
     fn defense_stats_component_works() {
         let stats = DefenseStats {
             armor: 5.0,
-            resistances: Resistances {
-                fire: 10.0,
-                ice: 0.0,
-                lightning: 0.0,
-            },
-            specialty: DefenseSpecialty::Armored,
+            magic_resist: 0.0,
+            fire: 10.0,
+            ice: 0.0,
+            poison: 0.0,
         };
         assert_eq!(stats.armor, 5.0);
-        assert_eq!(stats.resistances.fire, 10.0);
-        assert_eq!(stats.specialty, DefenseSpecialty::Armored);
+        assert_eq!(stats.fire, 10.0);
+    }
+
+    #[test]
+    fn defense_stats_default_is_all_zero() {
+        let stats = DefenseStats::default();
+        assert_eq!(stats.armor, 0.0);
+        assert_eq!(stats.magic_resist, 0.0);
+        assert_eq!(stats.fire, 0.0);
+        assert_eq!(stats.ice, 0.0);
+        assert_eq!(stats.poison, 0.0);
     }
 
     #[test]
