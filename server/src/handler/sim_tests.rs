@@ -5,7 +5,7 @@ use crate::model::game_state::GamePhase;
 use crate::model::lobby::Lobby;
 use crate::model::messages::{ClientMessage, PlaceMessage};
 use crate::model::player::Player;
-use crate::model::shape::Shape;
+use crate::model::unit_kind::UnitKind;
 
 const R: i64 = 1; // rusher
 const D: i64 = 2; // defender
@@ -64,7 +64,7 @@ fn wave_one_all_in_rush_is_survivable_and_net_negative() {
         let out = handle_client_message(
             &mut lobby,
             R,
-            ClientMessage::SendUnit { shape: Shape::Square },
+            ClientMessage::SendUnit { shape: UnitKind::Square },
         );
         assert!(matches!(out, crate::handler::in_game::MessageOutcome::Handled));
     }
@@ -73,7 +73,7 @@ fn wave_one_all_in_rush_is_survivable_and_net_negative() {
     handle_client_message(
         &mut lobby,
         R,
-        ClientMessage::Place(PlaceMessage { shape: Shape::Square, row: 1, col: 4 }),
+        ClientMessage::Place(PlaceMessage { shape: UnitKind::Square, row: 1, col: 4 }),
     );
 
     // Defender: four towers across the lane.
@@ -81,7 +81,7 @@ fn wave_one_all_in_rush_is_survivable_and_net_negative() {
         handle_client_message(
             &mut lobby,
             D,
-            ClientMessage::Place(PlaceMessage { shape: Shape::Square, row: 1, col }),
+            ClientMessage::Place(PlaceMessage { shape: UnitKind::Square, row: 1, col }),
         );
     }
 
@@ -147,7 +147,7 @@ fn full_clean_game_reaches_victory_at_wave_12() {
             handle_client_message(
                 &mut lobby,
                 player,
-                ClientMessage::Place(PlaceMessage { shape: Shape::Square, row: 1, col }),
+                ClientMessage::Place(PlaceMessage { shape: UnitKind::Square, row: 1, col }),
             );
         }
     }
@@ -173,7 +173,7 @@ fn full_clean_game_reaches_victory_at_wave_12() {
                 handle_client_message(
                     &mut lobby,
                     *pid,
-                    ClientMessage::Place(PlaceMessage { shape: Shape::Square, row, col }),
+                    ClientMessage::Place(PlaceMessage { shape: UnitKind::Square, row, col }),
                 );
             }
         }
@@ -244,7 +244,7 @@ fn symmetric_builds_produce_symmetric_outcomes() {
             handle_client_message(
                 &mut lobby,
                 player,
-                ClientMessage::Place(PlaceMessage { shape: Shape::Square, row: 1, col }),
+                ClientMessage::Place(PlaceMessage { shape: UnitKind::Square, row: 1, col }),
             );
         }
     }
@@ -301,14 +301,14 @@ fn sustained_scout_spam_does_not_beat_static_defense() {
         handle_client_message(
             &mut lobby,
             D,
-            ClientMessage::Place(PlaceMessage { shape: Shape::Square, row: 1, col }),
+            ClientMessage::Place(PlaceMessage { shape: UnitKind::Square, row: 1, col }),
         );
     }
 
     for wave in 1..=4u32 {
         // Rusher: all gold into scouts, every build phase.
         while lobby.players[0].gold >= lobby.players[0].next_send_costs[0] {
-            handle_client_message(&mut lobby, R, ClientMessage::SendUnit { shape: Shape::Square });
+            handle_client_message(&mut lobby, R, ClientMessage::SendUnit { shape: UnitKind::Square });
         }
         handle_client_message(&mut lobby, R, ClientMessage::SkipToCombat);
         tick_past_phase(&mut lobby, &mut schedule, GamePhase::Build);

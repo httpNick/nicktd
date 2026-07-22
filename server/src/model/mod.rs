@@ -7,5 +7,5 @@ pub mod king_config;
 pub mod lobby;
 pub mod messages;
 pub mod player;
-pub mod shape;
+pub mod unit_kind;
 pub mod unit_config;

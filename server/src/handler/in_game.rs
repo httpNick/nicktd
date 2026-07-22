@@ -426,7 +426,7 @@ mod tests {
     use crate::model::lobby::Lobby;
     use crate::model::messages::PlaceMessage;
     use crate::model::player::Player;
-    use crate::model::shape::Shape;
+    use crate::model::unit_kind::UnitKind;
 
     #[test]
     fn test_unit_placement_restricted_by_player_id() {
@@ -445,7 +445,7 @@ mod tests {
 
         // Valid placements
         let p1_valid = PlaceMessage {
-            shape: Shape::Square,
+            shape: UnitKind::Square,
             row: 1,
             col: 2,
         };
@@ -459,7 +459,7 @@ mod tests {
         assert!(x1 < LEFT_BOARD_END);
 
         let p2_valid = PlaceMessage {
-            shape: Shape::Square,
+            shape: UnitKind::Square,
             row: 1,
             col: 2, // Now uses local col 2
         };
@@ -480,7 +480,7 @@ mod tests {
         lobby.players.push(Player::new(player_id, "p1".into(), 100));
 
         let p = PlaceMessage {
-            shape: Shape::Square,
+            shape: UnitKind::Square,
             row: 1,
             col: 1,
         };
@@ -517,7 +517,7 @@ mod tests {
         lobby.players.push(Player::new(player_id, "p1".into(), 10));
 
         let p = PlaceMessage {
-            shape: Shape::Square,
+            shape: UnitKind::Square,
             row: 1,
             col: 1,
         };
@@ -556,7 +556,7 @@ mod tests {
         lobby.game_state.phase = GamePhase::Combat;
 
         let p = PlaceMessage {
-            shape: Shape::Square,
+            shape: UnitKind::Square,
             row: 1,
             col: 1,
         };
@@ -599,7 +599,7 @@ mod tests {
         // Default phase is Build
 
         let p = PlaceMessage {
-            shape: Shape::Square,
+            shape: UnitKind::Square,
             row: 1,
             col: 1,
         };
@@ -643,7 +643,7 @@ mod tests {
         let mut lobby = Lobby::new();
         lobby.players.push(Player::new(1, "p1".into(), 100));
         let msg = ClientMessage::Place(PlaceMessage {
-            shape: Shape::Square,
+            shape: UnitKind::Square,
             row: 1,
             col: 1,
         });
@@ -663,7 +663,7 @@ mod tests {
         let mut lobby = Lobby::new();
         lobby.players.push(Player::new(1, "p1".into(), 200));
         let msg = ClientMessage::Place(PlaceMessage {
-            shape: Shape::Square,
+            shape: UnitKind::Square,
             row: 1,
             col: 1,
         });
@@ -673,7 +673,7 @@ mod tests {
         ));
 
         let dup = ClientMessage::Place(PlaceMessage {
-            shape: Shape::Square,
+            shape: UnitKind::Square,
             row: 1,
             col: 1,
         });
@@ -708,7 +708,7 @@ mod tests {
         let e = spawn_unit(
             &mut lobby.game_state.world,
             Position { x: 100.0, y: 100.0 },
-            Shape::Square,
+            UnitKind::Square,
             1,
         );
         let outcome = handle_client_message(
@@ -737,7 +737,7 @@ mod tests {
         spawn_unit(
             &mut lobby.game_state.world,
             Position { x, y },
-            Shape::Square,
+            UnitKind::Square,
             1,
         );
 
@@ -761,7 +761,7 @@ mod tests {
         spawn_unit(
             &mut lobby.game_state.world,
             Position { x, y },
-            Shape::Square,
+            UnitKind::Square,
             1,
         );
 
@@ -806,7 +806,7 @@ mod tests {
         let tower_a = spawn_unit(
             &mut lobby.game_state.world,
             Position { x: 100.0, y: 100.0 },
-            Shape::Square,
+            UnitKind::Square,
             player_id,
         );
         let stale_id = tower_a.to_bits();
@@ -816,7 +816,7 @@ mod tests {
         let tower_b = spawn_unit(
             &mut lobby.game_state.world,
             Position { x: 200.0, y: 100.0 },
-            Shape::Circle,
+            UnitKind::Circle,
             player_id,
         );
 
@@ -837,7 +837,7 @@ mod tests {
         let tower = spawn_unit(
             &mut lobby.game_state.world,
             Position { x: 100.0, y: 300.0 },
-            Shape::Square,
+            UnitKind::Square,
             1,
         );
 
@@ -863,7 +863,7 @@ mod tests {
         let entity = spawn_unit(
             &mut lobby.game_state.world,
             Position { x: 100.0, y: 100.0 },
-            Shape::Square,
+            UnitKind::Square,
             player_id,
         );
 
@@ -927,7 +927,7 @@ mod tests {
         let entity = spawn_unit(
             &mut lobby.game_state.world,
             Position { x: 100.0, y: 100.0 },
-            Shape::Square,
+            UnitKind::Square,
             1,
         );
 
@@ -951,7 +951,7 @@ mod tests {
         let entity = spawn_unit(
             &mut lobby.game_state.world,
             Position { x: 100.0, y: 100.0 },
-            Shape::Square,
+            UnitKind::Square,
             player_id,
         );
         let entity_id = entity.index();
@@ -1002,7 +1002,7 @@ mod tests {
         let entity = spawn_unit(
             &mut lobby.game_state.world,
             Position { x: 100.0, y: 100.0 },
-            Shape::Square,
+            UnitKind::Square,
             player_id,
         );
         let entity_id = entity.index();
@@ -1051,7 +1051,7 @@ mod tests {
         let entity = spawn_unit(
             &mut lobby.game_state.world,
             Position { x: 100.0, y: 100.0 },
-            Shape::Square,
+            UnitKind::Square,
             player_1_id,
         );
         let entity_id = entity.index();
@@ -1092,7 +1092,7 @@ mod tests {
         let entity = spawn_unit(
             &mut lobby.game_state.world,
             Position { x: 100.0, y: 100.0 },
-            Shape::Circle,
+            UnitKind::Circle,
             player_id,
         );
         let entity_id = entity.index();
@@ -1136,8 +1136,8 @@ mod tests {
         assert!(found.is_some(), "Entity should be found");
         let (attack_data, range, _armor, shape, is_boss, owner_id, is_worker) = found.unwrap();
 
-        let profile = get_unit_profile(Shape::Circle);
-        assert_eq!(shape, Some(Shape::Circle));
+        let profile = get_unit_profile(UnitKind::Circle);
+        assert_eq!(shape, Some(UnitKind::Circle));
         assert!(!is_boss);
         assert_eq!(owner_id, Some(player_id));
         assert!(!is_worker);
@@ -1220,7 +1220,7 @@ mod tests {
         let entity = spawn_unit(
             &mut lobby.game_state.world,
             Position { x: 100.0, y: 100.0 },
-            Shape::Square,
+            UnitKind::Square,
             owner_id,
         );
         let entity_id = entity.index();
@@ -1286,7 +1286,7 @@ mod tests {
         let player_id = 1;
         lobby.players.push(Player::new(player_id, "p1".into(), 100));
 
-        let shape = Shape::Square;
+        let shape = UnitKind::Square;
         let profile = get_sent_unit_profile(shape);
 
         // Simulate SendUnit handler
@@ -1308,7 +1308,7 @@ mod tests {
             "Income should be increased by profile income"
         );
         assert_eq!(lobby.players[0].spawning_queue.len(), 1);
-        assert_eq!(lobby.players[0].spawning_queue[0], Shape::Square);
+        assert_eq!(lobby.players[0].spawning_queue[0], UnitKind::Square);
     }
 
     #[test]
@@ -1319,7 +1319,7 @@ mod tests {
         let player_id = 1;
         lobby.players.push(Player::new(player_id, "p1".into(), 3)); // Only 3 gold, Square costs 5
 
-        let shape = Shape::Square;
+        let shape = UnitKind::Square;
         let profile = get_sent_unit_profile(shape);
 
         let player_idx = lobby.players.iter().position(|p| p.id == player_id);
@@ -1349,18 +1349,18 @@ mod tests {
         let player_id = 1;
         lobby.players.push(Player::new(player_id, "p1".into(), 200));
 
-        let square_profile = get_sent_unit_profile(Shape::Square);
-        let triangle_profile = get_sent_unit_profile(Shape::Triangle);
+        let square_profile = get_sent_unit_profile(UnitKind::Square);
+        let triangle_profile = get_sent_unit_profile(UnitKind::Triangle);
 
         // Buy a Square (costs 8, income 1)
         let idx = 0;
         if lobby.players[idx].try_spend_gold(square_profile.send_cost) {
-            lobby.players[idx].spawning_queue.push(Shape::Square);
+            lobby.players[idx].spawning_queue.push(UnitKind::Square);
             lobby.players[idx].income += square_profile.income;
         }
         // Buy a Triangle (costs 20, income 2)
         if lobby.players[idx].try_spend_gold(triangle_profile.send_cost) {
-            lobby.players[idx].spawning_queue.push(Shape::Triangle);
+            lobby.players[idx].spawning_queue.push(UnitKind::Triangle);
             lobby.players[idx].income += triangle_profile.income;
         }
 
@@ -1476,7 +1476,7 @@ mod tests {
         spawn_unit(
             &mut lobby.game_state.world,
             Position { x: 100.0, y: 300.0 },
-            Shape::Square,
+            UnitKind::Square,
             1,
         );
         // Establish a nonzero seq (as a real lobby would have after ticking) so the
@@ -1525,7 +1525,7 @@ mod tests {
                 &mut lobby,
                 1,
                 ClientMessage::SendUnit {
-                    shape: Shape::Square,
+                    shape: UnitKind::Square,
                 },
             );
             assert!(matches!(outcome, MessageOutcome::Handled));
@@ -1545,7 +1545,7 @@ mod tests {
             &mut lobby,
             1,
             ClientMessage::SendUnit {
-                shape: Shape::Square,
+                shape: UnitKind::Square,
             },
         );
         assert!(matches!(ok, MessageOutcome::Handled));
@@ -1553,7 +1553,7 @@ mod tests {
             &mut lobby,
             1,
             ClientMessage::SendUnit {
-                shape: Shape::Square,
+                shape: UnitKind::Square,
             },
         );
         assert!(matches!(rejected, MessageOutcome::Reply(_)));

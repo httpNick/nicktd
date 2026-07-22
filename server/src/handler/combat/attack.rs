@@ -218,7 +218,7 @@ pub fn update_mana(mut query: Query<&mut Mana>, time: Res<DeltaTime>) {
 mod tests {
     use super::*;
     use crate::model::components::{AttackProfile, DamageType};
-    use crate::model::shape::Shape;
+    use crate::model::unit_kind::UnitKind;
     use crate::model::unit_config::{DEFAULT_ATTACK_RANGE, FIREBALL_MANA_COST, MAGE_MELEE_DAMAGE};
 
     #[test]
@@ -501,13 +501,13 @@ mod tests {
         let unit = crate::handler::spawn::spawn_unit(
             &mut world,
             Position { x: 0.0, y: 0.0 },
-            Shape::Circle,
+            UnitKind::Circle,
             1,
         );
         let enemy = crate::handler::spawn::spawn_enemy(
             &mut world,
             Position { x: 100.0, y: 0.0 },
-            Shape::Circle,
+            UnitKind::Circle,
             1,
         );
 

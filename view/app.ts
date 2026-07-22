@@ -2,7 +2,7 @@ import { initRenderer, RendererHandle, ClickHit } from './renderer';
 import { Unit, Player, CombatEvent, SendUnitCatalogEntry, DamageType } from './types';
 import { applyThemeToDom } from './theme';
 import { UnitInfoPanel } from './unit_info_panel';
-import { MercenaryPanel } from './mercenary_panel';
+import { MercenaryPanel, UnitKind } from './mercenary_panel';
 import { KingUpgradePanel } from './king_upgrade_panel';
 
 // --- TYPES & INTERFACES ---
@@ -96,7 +96,7 @@ const hireWorkerBtn = document.getElementById('hire-worker-btn') as HTMLButtonEl
 
 const WORKER_CAP = 7;
 
-let selectedShape: 'Square' | 'Circle' | 'Triangle' = 'Square';
+let selectedShape: UnitKind = 'Square';
 let unitMap = new Map<number, Unit>();
 let lastSeq = -1;
 let currentPlayers: Player[] = [];

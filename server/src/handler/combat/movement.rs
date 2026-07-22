@@ -238,7 +238,7 @@ mod tests {
     use super::*;
     use crate::handler::combat::{update_attack_range_markers, update_leaked_creeps};
     use crate::model::components::InAttackRange;
-    use crate::model::shape::Shape;
+    use crate::model::unit_kind::UnitKind;
 
     #[test]
     fn range_aware_movement_stops_at_range() {
@@ -248,7 +248,7 @@ mod tests {
         let unit = crate::handler::spawn::spawn_unit(
             &mut world,
             Position { x: 0.0, y: 0.0 },
-            Shape::Square,
+            UnitKind::Square,
             1,
         );
         // Overwrite default range for test
@@ -257,7 +257,7 @@ mod tests {
         let enemy = crate::handler::spawn::spawn_enemy(
             &mut world,
             Position { x: 100.0, y: 0.0 }, // 100 pixels away
-            Shape::Triangle,
+            UnitKind::Triangle,
             1,
         );
 
@@ -307,7 +307,7 @@ mod tests {
         let unit_a = crate::handler::spawn::spawn_unit(
             &mut world,
             Position { x: 100.0, y: 100.0 },
-            Shape::Square,
+            UnitKind::Square,
             1,
         );
         world.entity_mut(unit_a).insert(CollisionRadius(radius));
@@ -315,7 +315,7 @@ mod tests {
         let unit_b = crate::handler::spawn::spawn_unit(
             &mut world,
             Position { x: 105.0, y: 100.0 }, // Overlapping by 15 pixels (combined radius 20)
-            Shape::Square,
+            UnitKind::Square,
             1,
         );
         world.entity_mut(unit_b).insert(CollisionRadius(radius));
@@ -346,7 +346,7 @@ mod tests {
         let unit = crate::handler::spawn::spawn_unit(
             &mut world,
             Position { x: 5.0, y: 5.0 },
-            Shape::Square,
+            UnitKind::Square,
             1,
         );
         world.entity_mut(unit).insert(CollisionRadius(radius));
@@ -356,7 +356,7 @@ mod tests {
             let _ = crate::handler::spawn::spawn_unit(
                 &mut world,
                 Position { x: 15.0, y: 15.0 },
-                Shape::Square,
+                UnitKind::Square,
                 1,
             );
         }
@@ -454,7 +454,7 @@ mod tests {
         let dead_tower = crate::handler::spawn::spawn_unit(
             &mut world,
             Position { x: 100.0, y: 300.0 },
-            Shape::Square,
+            UnitKind::Square,
             1,
         );
         world.entity_mut(dead_tower).insert(Dead);
@@ -464,7 +464,7 @@ mod tests {
         let living_unit = crate::handler::spawn::spawn_unit(
             &mut world,
             Position { x: 105.0, y: 300.0 },
-            Shape::Square,
+            UnitKind::Square,
             1,
         );
         world
@@ -788,13 +788,13 @@ mod tests {
         let unit = crate::handler::spawn::spawn_unit(
             &mut world,
             Position { x: 100.0, y: 300.0 },
-            Shape::Square,
+            UnitKind::Square,
             1,
         );
         let enemy = crate::handler::spawn::spawn_enemy(
             &mut world,
             Position { x: 200.0, y: 300.0 },
-            Shape::Triangle,
+            UnitKind::Triangle,
             1,
         );
         world.entity_mut(unit).insert(Target(enemy));
@@ -817,7 +817,7 @@ mod tests {
         let enemy = crate::handler::spawn::spawn_enemy(
             &mut world,
             Position { x: 100.0, y: 200.0 },
-            Shape::Triangle,
+            UnitKind::Triangle,
             1,
         );
 
@@ -850,7 +850,7 @@ mod tests {
                 x: 300.0,              // Same x as left king
                 y: TOTAL_HEIGHT + 5.0, // Just above TOTAL_HEIGHT (leaked)
             },
-            Shape::Square,
+            UnitKind::Square,
             1,
         );
 
@@ -894,7 +894,7 @@ mod tests {
                 let angle = (i as f32 / 5.0) * 2.0 * std::f32::consts::PI;
                 let x = 300.0 + angle.cos() * 30.0;
                 let y = TOTAL_HEIGHT + 10.0 + angle.sin() * 30.0;
-                crate::handler::spawn::spawn_enemy(&mut world, Position { x, y }, Shape::Square, 1)
+                crate::handler::spawn::spawn_enemy(&mut world, Position { x, y }, UnitKind::Square, 1)
             })
             .collect();
 

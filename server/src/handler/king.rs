@@ -191,7 +191,7 @@ mod tests {
     #[test]
     fn update_king_targeting_assigns_leaked_enemy_as_target() {
         use crate::model::components::{CollisionRadius, Enemy, ShapeComponent};
-        use crate::model::shape::Shape;
+        use crate::model::unit_kind::UnitKind;
 
         let mut world = World::new();
         let king = spawn_king(&mut world, 1, 0);
@@ -205,7 +205,7 @@ mod tests {
                 },
                 Enemy,
                 CollisionRadius(10.0),
-                ShapeComponent(Shape::Circle),
+                ShapeComponent(UnitKind::Circle),
             ))
             .id();
 
@@ -223,7 +223,7 @@ mod tests {
     #[test]
     fn update_king_targeting_ignores_in_lane_enemies() {
         use crate::model::components::{CollisionRadius, Enemy, ShapeComponent};
-        use crate::model::shape::Shape;
+        use crate::model::unit_kind::UnitKind;
 
         let mut world = World::new();
         let king = spawn_king(&mut world, 1, 0);
@@ -236,7 +236,7 @@ mod tests {
             },
             Enemy,
             CollisionRadius(10.0),
-            ShapeComponent(Shape::Circle),
+            ShapeComponent(UnitKind::Circle),
         ));
 
         update_king_targeting(&mut world);

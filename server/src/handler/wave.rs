@@ -1,10 +1,10 @@
-use crate::model::shape::Shape;
+use crate::model::unit_kind::UnitKind;
 
 /// Clearing this wave wins the game. Bosses spawn on wave 6 (mid) and this wave.
 pub const FINAL_WAVE: u32 = 12;
 
 pub struct WaveConfig {
-    pub enemies: Vec<Shape>,
+    pub enemies: Vec<UnitKind>,
     #[allow(dead_code)]
     pub is_boss_wave: bool,
 }
@@ -16,91 +16,91 @@ pub fn get_scaling_multiplier(wave: u32) -> f32 {
 pub fn get_wave_config(wave: u32) -> WaveConfig {
     match wave {
         1 => WaveConfig {
-            enemies: vec![Shape::Square, Shape::Square],
+            enemies: vec![UnitKind::Square, UnitKind::Square],
             is_boss_wave: false,
         },
         2 => WaveConfig {
-            enemies: vec![Shape::Square, Shape::Square, Shape::Triangle],
+            enemies: vec![UnitKind::Square, UnitKind::Square, UnitKind::Triangle],
             is_boss_wave: false,
         },
         3 => WaveConfig {
-            enemies: vec![Shape::Square, Shape::Triangle, Shape::Triangle],
+            enemies: vec![UnitKind::Square, UnitKind::Triangle, UnitKind::Triangle],
             is_boss_wave: false,
         },
         4 => WaveConfig {
-            enemies: vec![Shape::Square, Shape::Triangle, Shape::Circle],
+            enemies: vec![UnitKind::Square, UnitKind::Triangle, UnitKind::Circle],
             is_boss_wave: false,
         },
         5 => WaveConfig {
             enemies: vec![
-                Shape::Triangle,
-                Shape::Triangle,
-                Shape::Circle,
-                Shape::Circle,
+                UnitKind::Triangle,
+                UnitKind::Triangle,
+                UnitKind::Circle,
+                UnitKind::Circle,
             ],
             is_boss_wave: false,
         },
         6 => WaveConfig {
-            enemies: vec![Shape::Circle], // This will be the Boss
+            enemies: vec![UnitKind::Circle], // This will be the Boss
             is_boss_wave: true,
         },
         7 => WaveConfig {
             enemies: vec![
-                Shape::Square,
-                Shape::Square,
-                Shape::Triangle,
-                Shape::Triangle,
-                Shape::Circle,
+                UnitKind::Square,
+                UnitKind::Square,
+                UnitKind::Triangle,
+                UnitKind::Triangle,
+                UnitKind::Circle,
             ],
             is_boss_wave: false,
         },
         8 => WaveConfig {
             enemies: vec![
-                Shape::Square,
-                Shape::Square,
-                Shape::Triangle,
-                Shape::Triangle,
-                Shape::Circle,
-                Shape::Circle,
+                UnitKind::Square,
+                UnitKind::Square,
+                UnitKind::Triangle,
+                UnitKind::Triangle,
+                UnitKind::Circle,
+                UnitKind::Circle,
             ],
             is_boss_wave: false,
         },
         9 => WaveConfig {
             enemies: vec![
-                Shape::Triangle,
-                Shape::Triangle,
-                Shape::Triangle,
-                Shape::Circle,
-                Shape::Circle,
+                UnitKind::Triangle,
+                UnitKind::Triangle,
+                UnitKind::Triangle,
+                UnitKind::Circle,
+                UnitKind::Circle,
             ],
             is_boss_wave: false,
         },
         10 => WaveConfig {
             enemies: vec![
-                Shape::Square,
-                Shape::Square,
-                Shape::Square,
-                Shape::Triangle,
-                Shape::Triangle,
-                Shape::Circle,
-                Shape::Circle,
+                UnitKind::Square,
+                UnitKind::Square,
+                UnitKind::Square,
+                UnitKind::Triangle,
+                UnitKind::Triangle,
+                UnitKind::Circle,
+                UnitKind::Circle,
             ],
             is_boss_wave: false,
         },
         11 => WaveConfig {
             enemies: vec![
-                Shape::Triangle,
-                Shape::Triangle,
-                Shape::Triangle,
-                Shape::Circle,
-                Shape::Circle,
-                Shape::Circle,
+                UnitKind::Triangle,
+                UnitKind::Triangle,
+                UnitKind::Triangle,
+                UnitKind::Circle,
+                UnitKind::Circle,
+                UnitKind::Circle,
             ],
             is_boss_wave: false,
         },
         12 => WaveConfig {
             // Boss Circle escorted by two normal-scaled Triangles.
-            enemies: vec![Shape::Circle, Shape::Triangle, Shape::Triangle],
+            enemies: vec![UnitKind::Circle, UnitKind::Triangle, UnitKind::Triangle],
             is_boss_wave: true,
         },
         _ => WaveConfig {

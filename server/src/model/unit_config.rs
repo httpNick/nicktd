@@ -1,5 +1,5 @@
 use super::components::{AttackProfile, CombatProfile, DamageType, Mana};
-use super::shape::Shape;
+use super::unit_kind::UnitKind;
 
 // --- Balance Constants ---
 pub const DEFAULT_COLLISION_RADIUS: f32 = 20.0;
@@ -25,21 +25,21 @@ pub struct UnitProfile {
     pub gold_cost: u32,
 }
 
-pub fn get_unit_profile(shape: Shape) -> UnitProfile {
+pub fn get_unit_profile(shape: UnitKind) -> UnitProfile {
     let radius = match shape {
-        Shape::Square => DEFAULT_COLLISION_RADIUS + 2.0,
-        Shape::Circle => DEFAULT_COLLISION_RADIUS,
-        Shape::Triangle => DEFAULT_COLLISION_RADIUS - 2.0,
+        UnitKind::Square => DEFAULT_COLLISION_RADIUS + 2.0,
+        UnitKind::Circle => DEFAULT_COLLISION_RADIUS,
+        UnitKind::Triangle => DEFAULT_COLLISION_RADIUS - 2.0,
     };
 
     let gold_cost = match shape {
-        Shape::Square => 25,
-        Shape::Triangle => 40,
-        Shape::Circle => 75,
+        UnitKind::Square => 25,
+        UnitKind::Triangle => 40,
+        UnitKind::Circle => 75,
     };
 
     let combat = match shape {
-        Shape::Triangle => CombatProfile {
+        UnitKind::Triangle => CombatProfile {
             primary: AttackProfile {
                 damage: DEFAULT_DAMAGE,
                 rate: DEFAULT_ATTACK_RATE,
@@ -49,7 +49,7 @@ pub fn get_unit_profile(shape: Shape) -> UnitProfile {
             secondary: None,
             mana_cost: 0.0,
         },
-        Shape::Square => CombatProfile {
+        UnitKind::Square => CombatProfile {
             primary: AttackProfile {
                 damage: DEFAULT_DAMAGE,
                 rate: DEFAULT_ATTACK_RATE,
@@ -59,7 +59,7 @@ pub fn get_unit_profile(shape: Shape) -> UnitProfile {
             secondary: None,
             mana_cost: 0.0,
         },
-        Shape::Circle => CombatProfile {
+        UnitKind::Circle => CombatProfile {
             primary: AttackProfile {
                 damage: DEFAULT_DAMAGE,
                 rate: DEFAULT_ATTACK_RATE,
@@ -76,7 +76,7 @@ pub fn get_unit_profile(shape: Shape) -> UnitProfile {
         },
     };
 
-    let mana = if shape == Shape::Circle {
+    let mana = if shape == UnitKind::Circle {
         Some(Mana {
             current: MAGE_MANA_MAX,
             max: MAGE_MANA_MAX,
@@ -112,11 +112,11 @@ pub const SENT_TRIANGLE_BOUNTY: u32 = 12;
 pub const SENT_CIRCLE_BOUNTY: u32 = 30;
 
 /// Stable index for per-shape counters/arrays: Square 0, Triangle 1, Circle 2.
-pub fn shape_index(shape: Shape) -> usize {
+pub fn shape_index(shape: UnitKind) -> usize {
     match shape {
-        Shape::Square => 0,
-        Shape::Triangle => 1,
-        Shape::Circle => 2,
+        UnitKind::Square => 0,
+        UnitKind::Triangle => 1,
+        UnitKind::Circle => 2,
     }
 }
 
@@ -129,7 +129,7 @@ pub fn shape_index(shape: Shape) -> usize {
 /// `handler::wave::get_scaling_multiplier` (f32, used for stat scaling):
 /// f32 rounding lands a hair above exact integer products and `.ceil()` would
 /// overcharge by 1 gold (e.g. Circle wave 2 n=0 must be exactly 60).
-pub fn sent_unit_cost(shape: Shape, wave: u32, n_this_wave: u32) -> u32 {
+pub fn sent_unit_cost(shape: UnitKind, wave: u32, n_this_wave: u32) -> u32 {
     let base = get_sent_unit_profile(shape).send_cost as f64;
     let wave_mult = 1.2f64.powi(wave as i32 - 1);
     let repeat_mult = 1.4f64.powi(n_this_wave as i32);
@@ -164,23 +164,23 @@ pub struct SentUnitProfile {
 }
 
 /// Returns the balance profile for a player-sent unit of the given shape.
-pub fn get_sent_unit_profile(shape: Shape) -> SentUnitProfile {
+pub fn get_sent_unit_profile(shape: UnitKind) -> SentUnitProfile {
     match shape {
-        Shape::Square => SentUnitProfile {
+        UnitKind::Square => SentUnitProfile {
             name: "Scout",
             send_cost: SENT_SQUARE_COST,
             income: SENT_SQUARE_INCOME,
             bounty: SENT_SQUARE_BOUNTY,
             health_multiplier: SENT_SQUARE_HEALTH_MULT,
         },
-        Shape::Triangle => SentUnitProfile {
+        UnitKind::Triangle => SentUnitProfile {
             name: "Raider",
             send_cost: SENT_TRIANGLE_COST,
             income: SENT_TRIANGLE_INCOME,
             bounty: SENT_TRIANGLE_BOUNTY,
             health_multiplier: SENT_TRIANGLE_HEALTH_MULT,
         },
-        Shape::Circle => SentUnitProfile {
+        UnitKind::Circle => SentUnitProfile {
             name: "Siege Mage",
             send_cost: SENT_CIRCLE_COST,
             income: SENT_CIRCLE_INCOME,
@@ -195,7 +195,7 @@ pub fn get_sent_unit_profile(shape: Shape) -> SentUnitProfile {
 /// this — adding a sendable unit here (+ costs array slot) requires no
 /// client change.
 pub fn send_unit_catalog() -> Vec<crate::model::messages::SendUnitCatalogEntry> {
-    [Shape::Square, Shape::Triangle, Shape::Circle]
+    [UnitKind::Square, UnitKind::Triangle, UnitKind::Circle]
         .into_iter()
         .map(|shape| {
             let profile = get_sent_unit_profile(shape);
@@ -218,16 +218,16 @@ mod tests {
 
     #[test]
     fn sent_unit_profiles_exist_for_all_shapes() {
-        let _ = get_sent_unit_profile(Shape::Square);
-        let _ = get_sent_unit_profile(Shape::Triangle);
-        let _ = get_sent_unit_profile(Shape::Circle);
+        let _ = get_sent_unit_profile(UnitKind::Square);
+        let _ = get_sent_unit_profile(UnitKind::Triangle);
+        let _ = get_sent_unit_profile(UnitKind::Circle);
     }
 
     #[test]
     fn sent_unit_profiles_have_unique_names() {
-        let square = get_sent_unit_profile(Shape::Square);
-        let triangle = get_sent_unit_profile(Shape::Triangle);
-        let circle = get_sent_unit_profile(Shape::Circle);
+        let square = get_sent_unit_profile(UnitKind::Square);
+        let triangle = get_sent_unit_profile(UnitKind::Triangle);
+        let circle = get_sent_unit_profile(UnitKind::Circle);
         assert_ne!(square.name, triangle.name);
         assert_ne!(triangle.name, circle.name);
         assert_ne!(square.name, circle.name);
@@ -235,7 +235,7 @@ mod tests {
 
     #[test]
     fn all_sent_unit_bounties_are_nonzero() {
-        for shape in [Shape::Square, Shape::Triangle, Shape::Circle] {
+        for shape in [UnitKind::Square, UnitKind::Triangle, UnitKind::Circle] {
             let p = get_sent_unit_profile(shape);
             assert!(p.bounty > 0, "{} bounty must be > 0", p.name);
         }
@@ -243,9 +243,9 @@ mod tests {
 
     #[test]
     fn sent_square_has_best_income_per_gold_ratio() {
-        let square = get_sent_unit_profile(Shape::Square);
-        let triangle = get_sent_unit_profile(Shape::Triangle);
-        let circle = get_sent_unit_profile(Shape::Circle);
+        let square = get_sent_unit_profile(UnitKind::Square);
+        let triangle = get_sent_unit_profile(UnitKind::Triangle);
+        let circle = get_sent_unit_profile(UnitKind::Circle);
         let sq_ratio = square.income as f32 / square.send_cost as f32;
         let tr_ratio = triangle.income as f32 / triangle.send_cost as f32;
         let ci_ratio = circle.income as f32 / circle.send_cost as f32;
@@ -257,18 +257,18 @@ mod tests {
 
     #[test]
     fn sent_circle_has_highest_health_multiplier() {
-        let square = get_sent_unit_profile(Shape::Square);
-        let triangle = get_sent_unit_profile(Shape::Triangle);
-        let circle = get_sent_unit_profile(Shape::Circle);
+        let square = get_sent_unit_profile(UnitKind::Square);
+        let triangle = get_sent_unit_profile(UnitKind::Triangle);
+        let circle = get_sent_unit_profile(UnitKind::Circle);
         assert!(circle.health_multiplier > triangle.health_multiplier);
         assert!(triangle.health_multiplier > square.health_multiplier);
     }
 
     #[test]
     fn unit_profiles_have_gold_costs() {
-        let square = get_unit_profile(Shape::Square);
-        let triangle = get_unit_profile(Shape::Triangle);
-        let circle = get_unit_profile(Shape::Circle);
+        let square = get_unit_profile(UnitKind::Square);
+        let triangle = get_unit_profile(UnitKind::Triangle);
+        let circle = get_unit_profile(UnitKind::Circle);
 
         // Expected costs: Square (25), Triangle (40), Circle (75)
         // These will fail to compile initially because gold_cost field is missing
@@ -285,7 +285,7 @@ mod tests {
         let expected = [8, 12, 16, 22, 31, 44, 61, 85];
         for (n, &exp) in expected.iter().enumerate() {
             assert_eq!(
-                sent_unit_cost(Shape::Square, 1, n as u32),
+                sent_unit_cost(UnitKind::Square, 1, n as u32),
                 exp,
                 "scout #{} wave 1",
                 n
@@ -296,36 +296,36 @@ mod tests {
     #[test]
     fn sent_unit_cost_scales_with_wave_multiplier() {
         // First send (n=0) of each wave costs ceil(base × 1.2^(w-1)).
-        assert_eq!(sent_unit_cost(Shape::Square, 2, 0), 10); // ceil(8 × 1.2)
-        assert_eq!(sent_unit_cost(Shape::Triangle, 3, 0), 29); // ceil(20 × 1.44)
-        assert_eq!(sent_unit_cost(Shape::Circle, 1, 0), 50);
+        assert_eq!(sent_unit_cost(UnitKind::Square, 2, 0), 10); // ceil(8 × 1.2)
+        assert_eq!(sent_unit_cost(UnitKind::Triangle, 3, 0), 29); // ceil(20 × 1.44)
+        assert_eq!(sent_unit_cost(UnitKind::Circle, 1, 0), 50);
     }
 
     #[test]
     fn rebalanced_incomes_and_bounties() {
-        assert_eq!(get_sent_unit_profile(Shape::Square).income, 1);
-        assert_eq!(get_sent_unit_profile(Shape::Triangle).income, 2);
-        assert_eq!(get_sent_unit_profile(Shape::Circle).income, 4);
-        assert_eq!(get_sent_unit_profile(Shape::Square).bounty, 6);
-        assert_eq!(get_sent_unit_profile(Shape::Triangle).bounty, 12);
-        assert_eq!(get_sent_unit_profile(Shape::Circle).bounty, 30);
+        assert_eq!(get_sent_unit_profile(UnitKind::Square).income, 1);
+        assert_eq!(get_sent_unit_profile(UnitKind::Triangle).income, 2);
+        assert_eq!(get_sent_unit_profile(UnitKind::Circle).income, 4);
+        assert_eq!(get_sent_unit_profile(UnitKind::Square).bounty, 6);
+        assert_eq!(get_sent_unit_profile(UnitKind::Triangle).bounty, 12);
+        assert_eq!(get_sent_unit_profile(UnitKind::Circle).bounty, 30);
     }
 
     #[test]
     fn sent_unit_cost_has_no_f32_rounding_overcharge() {
         // Exact-formula pins under 1.4 escalation (base × 1.2^(w-1) × 1.4^n, ceil):
-        assert_eq!(sent_unit_cost(Shape::Circle, 2, 0), 60); // ceil(50 × 1.2)
-        assert_eq!(sent_unit_cost(Shape::Triangle, 4, 2), 68); // ceil(20 × 1.728 × 1.96)
-        assert_eq!(sent_unit_cost(Shape::Circle, 4, 1), 121); // ceil(50 × 1.728 × 1.4)
-        assert_eq!(sent_unit_cost(Shape::Circle, 4, 2), 170); // ceil(50 × 1.728 × 1.96)
-        assert_eq!(sent_unit_cost(Shape::Circle, 6, 3), 342); // ceil(50 × 2.48832 × 2.744)
+        assert_eq!(sent_unit_cost(UnitKind::Circle, 2, 0), 60); // ceil(50 × 1.2)
+        assert_eq!(sent_unit_cost(UnitKind::Triangle, 4, 2), 68); // ceil(20 × 1.728 × 1.96)
+        assert_eq!(sent_unit_cost(UnitKind::Circle, 4, 1), 121); // ceil(50 × 1.728 × 1.4)
+        assert_eq!(sent_unit_cost(UnitKind::Circle, 4, 2), 170); // ceil(50 × 1.728 × 1.96)
+        assert_eq!(sent_unit_cost(UnitKind::Circle, 6, 3), 342); // ceil(50 × 2.48832 × 2.744)
     }
 
     #[test]
     fn shape_index_is_stable() {
-        assert_eq!(shape_index(Shape::Square), 0);
-        assert_eq!(shape_index(Shape::Triangle), 1);
-        assert_eq!(shape_index(Shape::Circle), 2);
+        assert_eq!(shape_index(UnitKind::Square), 0);
+        assert_eq!(shape_index(UnitKind::Triangle), 1);
+        assert_eq!(shape_index(UnitKind::Circle), 2);
     }
 
     #[test]
@@ -340,7 +340,7 @@ mod tests {
     #[test]
     fn send_unit_catalog_values_match_get_sent_unit_profile() {
         let catalog = send_unit_catalog();
-        for shape in [Shape::Square, Shape::Triangle, Shape::Circle] {
+        for shape in [UnitKind::Square, UnitKind::Triangle, UnitKind::Circle] {
             let profile = get_sent_unit_profile(shape);
             let entry = &catalog[shape_index(shape)];
             assert_eq!(entry.shape, shape);

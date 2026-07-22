@@ -265,7 +265,7 @@ pub fn run_tick(lobby: &mut crate::model::lobby::Lobby, schedule: &mut Schedule,
 
                 // Drain each player's spawning queue and send their units to the
                 // opponent's board.
-                let queues: Vec<Vec<crate::model::shape::Shape>> = lobby
+                let queues: Vec<Vec<crate::model::unit_kind::UnitKind>> = lobby
                     .players
                     .iter()
                     .map(|p| p.spawning_queue.clone())
@@ -405,7 +405,7 @@ mod tests {
     use crate::model::game_state::GamePhase;
     use crate::model::lobby::Lobby;
     use crate::model::player::Player;
-    use crate::model::shape::Shape;
+    use crate::model::unit_kind::UnitKind;
     use bevy_ecs::prelude::{Entity, With};
 
     // --- Task 5 TDD: schedule phase-gating and event replay prevention ---
@@ -513,7 +513,7 @@ mod tests {
                 crate::handler::spawn::spawn_enemy(
                     &mut lobby.game_state.world,
                     Position { x, y: 30.0 },
-                    Shape::Triangle,
+                    UnitKind::Triangle,
                     lobby.game_state.wave_number,
                 );
             }
@@ -590,7 +590,7 @@ mod tests {
         crate::handler::spawn::spawn_enemy(
             &mut world,
             Position { x: 0.0, y: 0.0 },
-            Shape::Square,
+            UnitKind::Square,
             1,
         );
         assert!(
@@ -767,19 +767,19 @@ mod tests {
         crate::handler::spawn::spawn_enemy(
             &mut lobby.game_state.world,
             Position { x: 300.0, y: 30.0 },
-            Shape::Circle,
+            UnitKind::Circle,
             12,
         );
         crate::handler::spawn::spawn_enemy(
             &mut lobby.game_state.world,
             Position { x: 340.0, y: 30.0 },
-            Shape::Triangle,
+            UnitKind::Triangle,
             12,
         );
         crate::handler::spawn::spawn_enemy(
             &mut lobby.game_state.world,
             Position { x: 380.0, y: 30.0 },
-            Shape::Triangle,
+            UnitKind::Triangle,
             12,
         );
         assert!(!check_wave_cleared(&mut lobby.game_state.world));
@@ -818,7 +818,7 @@ mod tests {
     fn schedule_runs_full_combat_pipeline_in_combat_phase() {
         use crate::handler::spawn::{spawn_enemy, spawn_unit};
         use crate::model::components::{Health, Target};
-        use crate::model::shape::Shape;
+        use crate::model::unit_kind::UnitKind;
         use bevy_ecs::prelude::{With, World};
 
         let mut world = World::new();
@@ -835,13 +835,13 @@ mod tests {
         let unit = spawn_unit(
             &mut world,
             Position { x: 100.0, y: 300.0 },
-            Shape::Square,
+            UnitKind::Square,
             1,
         );
         let enemy = spawn_enemy(
             &mut world,
             Position { x: 120.0, y: 300.0 },
-            Shape::Triangle,
+            UnitKind::Triangle,
             1,
         );
 
@@ -937,7 +937,7 @@ mod tests {
     fn queued_units_spawn_on_opponent_board_at_combat_start() {
         use crate::model::components::{Bounty, Enemy};
         use crate::model::constants::{BOARD_SIZE, RIGHT_BOARD_START};
-        use crate::model::shape::Shape;
+        use crate::model::unit_kind::UnitKind;
         use crate::model::unit_config::{SENT_SQUARE_BOUNTY, get_sent_unit_profile};
 
         let mut lobby = Lobby::new();
@@ -945,13 +945,13 @@ mod tests {
         lobby.players.push(Player::new(2, "p2".into(), 100));
 
         // Player 0 queues a Square to send to Player 1's board.
-        lobby.players[0].spawning_queue.push(Shape::Square);
+        lobby.players[0].spawning_queue.push(UnitKind::Square);
 
         let spawn_x_left = BOARD_SIZE / 2.0;
         let spawn_x_right = RIGHT_BOARD_START + (BOARD_SIZE / 2.0);
 
         // Simulate the queue draining logic from run_game_loop.
-        let queues: Vec<Vec<Shape>> = lobby
+        let queues: Vec<Vec<UnitKind>> = lobby
             .players
             .iter()
             .map(|p| p.spawning_queue.clone())
@@ -1007,20 +1007,20 @@ mod tests {
     fn both_players_queues_spawn_on_each_others_boards() {
         use crate::model::components::{Bounty, Enemy};
         use crate::model::constants::{BOARD_SIZE, RIGHT_BOARD_START};
-        use crate::model::shape::Shape;
+        use crate::model::unit_kind::UnitKind;
         use crate::model::unit_config::get_sent_unit_profile;
 
         let mut lobby = Lobby::new();
         lobby.players.push(Player::new(1, "p1".into(), 100));
         lobby.players.push(Player::new(2, "p2".into(), 100));
 
-        lobby.players[0].spawning_queue.push(Shape::Square); // Player 0 → right board
-        lobby.players[1].spawning_queue.push(Shape::Triangle); // Player 1 → left board
+        lobby.players[0].spawning_queue.push(UnitKind::Square); // Player 0 → right board
+        lobby.players[1].spawning_queue.push(UnitKind::Triangle); // Player 1 → left board
 
         let spawn_x_left = BOARD_SIZE / 2.0;
         let spawn_x_right = RIGHT_BOARD_START + (BOARD_SIZE / 2.0);
 
-        let queues: Vec<Vec<Shape>> = lobby
+        let queues: Vec<Vec<UnitKind>> = lobby
             .players
             .iter()
             .map(|p| p.spawning_queue.clone())
@@ -1083,7 +1083,7 @@ mod tests {
     fn test_send_unit_end_to_end_flow() {
         use crate::model::components::{Bounty, Enemy};
         use crate::model::constants::{BOARD_SIZE, RIGHT_BOARD_START};
-        use crate::model::shape::Shape;
+        use crate::model::unit_kind::UnitKind;
         use crate::model::unit_config::{
             SENT_SQUARE_BOUNTY, SENT_SQUARE_COST, SENT_SQUARE_INCOME, get_sent_unit_profile,
         };
@@ -1093,7 +1093,7 @@ mod tests {
         lobby.players.push(Player::new(2, "p2".into(), 100));
 
         // --- STEP 1: Player 0 purchases a Square sent unit ---
-        let shape = Shape::Square;
+        let shape = UnitKind::Square;
         let profile = get_sent_unit_profile(shape);
         assert!(lobby.players[0].try_spend_gold(profile.send_cost));
         lobby.players[0].spawning_queue.push(shape);
@@ -1110,7 +1110,7 @@ mod tests {
             "Income increased"
         );
         assert_eq!(lobby.players[0].spawning_queue.len(), 1, "Unit queued");
-        assert_eq!(lobby.players[0].spawning_queue[0], Shape::Square);
+        assert_eq!(lobby.players[0].spawning_queue[0], UnitKind::Square);
 
         // --- STEP 2: Combat transition — regular wave + queue drain ---
         let spawn_x_left = BOARD_SIZE / 2.0;
@@ -1130,7 +1130,7 @@ mod tests {
         }
 
         // Drain each player's spawning queue to the opponent's board
-        let queues: Vec<Vec<Shape>> = lobby
+        let queues: Vec<Vec<UnitKind>> = lobby
             .players
             .iter()
             .map(|p| p.spawning_queue.clone())
@@ -1202,7 +1202,7 @@ mod tests {
     /// Verifies income accumulates across multiple purchases and is awarded at wave end.
     #[test]
     fn task_5_2_income_accumulates_and_awards_at_wave_end() {
-        use crate::model::shape::Shape;
+        use crate::model::unit_kind::UnitKind;
         use crate::model::unit_config::{
             SENT_SQUARE_INCOME, SENT_TRIANGLE_INCOME, get_sent_unit_profile,
         };
@@ -1213,10 +1213,10 @@ mod tests {
         lobby.players.push(Player::new(1, "p1".into(), 200));
 
         // Simulate two purchases accumulating income
-        let sq = get_sent_unit_profile(Shape::Square);
+        let sq = get_sent_unit_profile(UnitKind::Square);
         lobby.players[0].try_spend_gold(sq.send_cost);
         lobby.players[0].income += sq.income;
-        let tr = get_sent_unit_profile(Shape::Triangle);
+        let tr = get_sent_unit_profile(UnitKind::Triangle);
         lobby.players[0].try_spend_gold(tr.send_cost);
         lobby.players[0].income += tr.income;
 
@@ -1249,7 +1249,7 @@ mod tests {
     #[test]
     fn task_5_2_spawning_queue_fully_drained_after_combat() {
         use crate::model::constants::{BOARD_SIZE, RIGHT_BOARD_START};
-        use crate::model::shape::Shape;
+        use crate::model::unit_kind::UnitKind;
         use crate::model::unit_config::get_sent_unit_profile;
 
         let mut lobby = Lobby::new();
@@ -1257,14 +1257,14 @@ mod tests {
         lobby.players.push(Player::new(2, "p2".into(), 200));
 
         // Queue three units for player 0
-        lobby.players[0].spawning_queue.push(Shape::Square);
-        lobby.players[0].spawning_queue.push(Shape::Triangle);
-        lobby.players[0].spawning_queue.push(Shape::Circle);
+        lobby.players[0].spawning_queue.push(UnitKind::Square);
+        lobby.players[0].spawning_queue.push(UnitKind::Triangle);
+        lobby.players[0].spawning_queue.push(UnitKind::Circle);
         assert_eq!(lobby.players[0].spawning_queue.len(), 3);
 
         // Simulate queue drain
         let spawn_x_right = RIGHT_BOARD_START + (BOARD_SIZE / 2.0);
-        let queues: Vec<Vec<Shape>> = lobby
+        let queues: Vec<Vec<UnitKind>> = lobby
             .players
             .iter()
             .map(|p| p.spawning_queue.clone())
@@ -1454,7 +1454,7 @@ mod tests {
                 x: 100.0,
                 y: TOTAL_HEIGHT + 10.0,
             },
-            Shape::Triangle,
+            UnitKind::Triangle,
             1,
         );
 
@@ -1475,7 +1475,7 @@ mod tests {
         spawn_enemy(
             &mut world,
             Position { x: 100.0, y: 300.0 },
-            Shape::Triangle,
+            UnitKind::Triangle,
             1,
         );
 
@@ -1553,7 +1553,7 @@ mod tests {
                 x: 100.0,
                 y: TOTAL_HEIGHT + 30.0,
             },
-            Shape::Circle,
+            UnitKind::Circle,
             1,
         );
 

@@ -1,7 +1,7 @@
 use super::components::{DamageType, Position};
 use super::game_state::GamePhase;
 use super::player::Player;
-use super::shape::Shape;
+use super::unit_kind::UnitKind;
 use bevy_ecs::message::Message;
 use serde::{Deserialize, Serialize};
 
@@ -16,7 +16,7 @@ pub struct CombatEvent {
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct PlaceMessage {
-    pub shape: Shape,
+    pub shape: UnitKind,
     pub row: u32,
     pub col: u32,
 }
@@ -35,7 +35,7 @@ pub enum ClientMessage {
         entity_id: u64,
     },
     SendUnit {
-        shape: Shape,
+        shape: UnitKind,
     },
     UpgradeKing {},
     /// Client detected a seq gap (missed a delta) and asks for a direct resync.
@@ -48,7 +48,7 @@ pub enum ClientMessage {
 pub struct Unit {
     /// Full entity bits (index + generation) so stale IDs never match recycled entities.
     pub id: u64,
-    pub shape: Shape,
+    pub shape: UnitKind,
     pub x: f32,
     pub y: f32,
     pub owner_id: i64,
@@ -114,7 +114,7 @@ pub struct GameStateDelta {
 /// contract with `Player::next_send_costs`.
 #[derive(Serialize, Clone, Debug)]
 pub struct SendUnitCatalogEntry {
-    pub shape: Shape,
+    pub shape: UnitKind,
     pub name: &'static str,
     pub base_cost: u32,
     pub income: u32,
@@ -173,7 +173,7 @@ mod tests {
         let json = r#"{"action": "sendUnit", "payload": {"shape": "Square"}}"#;
         let msg: ClientMessage = serde_json::from_str(json).unwrap();
         match msg {
-            ClientMessage::SendUnit { shape } => assert_eq!(shape, Shape::Square),
+            ClientMessage::SendUnit { shape } => assert_eq!(shape, UnitKind::Square),
             _ => panic!("Wrong message type"),
         }
     }
@@ -202,7 +202,7 @@ mod tests {
     fn unit_serialization_includes_mana() {
         let unit = Unit {
             id: 7,
-            shape: Shape::Circle,
+            shape: UnitKind::Circle,
             x: 100.0,
             y: 100.0,
             owner_id: 1,
@@ -226,7 +226,7 @@ mod tests {
     fn unit_serialization_includes_id_and_worker_state() {
         let unit = Unit {
             id: 5,
-            shape: Shape::Circle,
+            shape: UnitKind::Circle,
             x: 650.0,
             y: 50.0,
             owner_id: 1,
@@ -320,7 +320,7 @@ mod tests {
     #[test]
     fn serialize_send_unit_catalog() {
         let msg = ServerMessage::SendUnitCatalog(vec![SendUnitCatalogEntry {
-            shape: Shape::Square,
+            shape: UnitKind::Square,
             name: "Scout",
             base_cost: 8,
             income: 1,
