@@ -31,6 +31,9 @@ GEMINI.md
 .claude/
 .gemini/
 .kiro/
+ROADMAP.md
+docs/superpowers/
+docs/analysis/
 
 # Node.js
 node_modules/
