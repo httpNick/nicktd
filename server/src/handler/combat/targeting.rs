@@ -268,7 +268,7 @@ mod tests {
     use crate::model::components::TargetPositions;
     use crate::model::components::{AttackStats, AttackTimer, CollisionRadius, DamageType, Health};
     use crate::model::game_state::DeltaTime;
-    use crate::model::shape::Shape;
+    use crate::model::unit_kind::UnitKind;
 
     #[test]
     fn targeting_ignores_workers() {
@@ -277,7 +277,7 @@ mod tests {
         let _enemy = crate::handler::spawn::spawn_enemy(
             &mut world,
             Position { x: 100.0, y: 100.0 },
-            Shape::Triangle,
+            UnitKind::Triangle,
             1,
         );
 
@@ -292,7 +292,7 @@ mod tests {
         let unit = crate::handler::spawn::spawn_unit(
             &mut world,
             Position { x: 200.0, y: 200.0 },
-            Shape::Square,
+            UnitKind::Square,
             1,
         );
 
@@ -324,7 +324,7 @@ mod tests {
         let enemy = crate::handler::spawn::spawn_enemy(
             &mut world,
             Position { x: 105.0, y: 105.0 },
-            Shape::Triangle,
+            UnitKind::Triangle,
             1,
         );
 
@@ -332,7 +332,7 @@ mod tests {
         let unit = crate::handler::spawn::spawn_unit(
             &mut world,
             Position { x: 200.0, y: 200.0 },
-            Shape::Square,
+            UnitKind::Square,
             1,
         );
 
@@ -356,7 +356,7 @@ mod tests {
         let unit = crate::handler::spawn::spawn_unit(
             &mut world,
             Position { x: 0.0, y: 0.0 },
-            Shape::Square,
+            UnitKind::Square,
             1,
         );
         world.entity_mut(unit).insert(AttackRange(range));
@@ -364,7 +364,7 @@ mod tests {
         let enemy = crate::handler::spawn::spawn_enemy(
             &mut world,
             Position { x: 100.0, y: 0.0 },
-            Shape::Triangle,
+            UnitKind::Triangle,
             1,
         );
 
@@ -407,13 +407,13 @@ mod tests {
         let unit = crate::handler::spawn::spawn_unit(
             &mut world,
             Position { x: 0.0, y: 0.0 },
-            Shape::Circle,
+            UnitKind::Circle,
             1,
         );
         let enemy = crate::handler::spawn::spawn_enemy(
             &mut world,
             Position { x: 10.0, y: 10.0 },
-            Shape::Circle,
+            UnitKind::Circle,
             1,
         );
 
@@ -486,19 +486,19 @@ mod tests {
         let unit = crate::handler::spawn::spawn_unit(
             &mut world,
             Position { x: 0.0, y: 0.0 },
-            Shape::Circle,
+            UnitKind::Circle,
             1,
         );
         let enemy1 = crate::handler::spawn::spawn_enemy(
             &mut world,
             Position { x: 10.0, y: 0.0 },
-            Shape::Circle,
+            UnitKind::Circle,
             1,
         );
         let enemy2 = crate::handler::spawn::spawn_enemy(
             &mut world,
             Position { x: 100.0, y: 0.0 },
-            Shape::Circle,
+            UnitKind::Circle,
             1,
         );
 
@@ -534,7 +534,7 @@ mod tests {
         let dead_tower = crate::handler::spawn::spawn_unit(
             &mut world,
             Position { x: 100.0, y: 300.0 },
-            Shape::Square,
+            UnitKind::Square,
             1,
         );
         world.entity_mut(dead_tower).insert(Dead);
@@ -543,7 +543,7 @@ mod tests {
         let _enemy = crate::handler::spawn::spawn_enemy(
             &mut world,
             Position { x: 200.0, y: 300.0 },
-            Shape::Triangle,
+            UnitKind::Triangle,
             1,
         );
 
@@ -563,7 +563,7 @@ mod tests {
         let dead_tower = crate::handler::spawn::spawn_unit(
             &mut world,
             Position { x: 110.0, y: 300.0 },
-            Shape::Square,
+            UnitKind::Square,
             1,
         );
         world.entity_mut(dead_tower).insert(Dead);
@@ -572,7 +572,7 @@ mod tests {
         let living_tower = crate::handler::spawn::spawn_unit(
             &mut world,
             Position { x: 300.0, y: 300.0 },
-            Shape::Square,
+            UnitKind::Square,
             1,
         );
 
@@ -580,7 +580,7 @@ mod tests {
         let enemy = crate::handler::spawn::spawn_enemy(
             &mut world,
             Position { x: 100.0, y: 300.0 },
-            Shape::Triangle,
+            UnitKind::Triangle,
             1,
         );
 
@@ -606,7 +606,7 @@ mod tests {
         let tower = crate::handler::spawn::spawn_unit(
             &mut world,
             Position { x: 100.0, y: 300.0 },
-            Shape::Square,
+            UnitKind::Square,
             1,
         );
 
@@ -661,14 +661,14 @@ mod tests {
         let square_in_range = crate::handler::spawn::spawn_enemy(
             &mut world,
             Position { x: 100.0, y: 820.0 }, // 80 pixels away
-            Shape::Square,
+            UnitKind::Square,
             1,
         );
 
         let square_out_of_range = crate::handler::spawn::spawn_enemy(
             &mut world,
             Position { x: 100.0, y: 700.0 }, // 200 pixels away
-            Shape::Square,
+            UnitKind::Square,
             1,
         );
 
@@ -840,7 +840,7 @@ mod tests {
                 x: 100.0,
                 y: TOTAL_HEIGHT + 10.0,
             },
-            Shape::Triangle,
+            UnitKind::Triangle,
             1,
         );
         update_leaked_creeps(&mut world);
@@ -868,7 +868,7 @@ mod tests {
                     x,
                     y: TOTAL_HEIGHT + 10.0,
                 },
-                Shape::Square,
+                UnitKind::Square,
                 1,
             );
         }
@@ -891,7 +891,7 @@ mod tests {
                 x: 100.0,
                 y: TOTAL_HEIGHT + 10.0,
             },
-            Shape::Square,
+            UnitKind::Square,
             1,
         );
         update_leaked_creeps(&mut world);

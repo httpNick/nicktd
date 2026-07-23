@@ -1,7 +1,8 @@
 use super::components::{DamageType, Position};
+use super::family::Family;
 use super::game_state::GamePhase;
 use super::player::Player;
-use super::shape::Shape;
+use super::unit_kind::UnitKind;
 use bevy_ecs::message::Message;
 use serde::{Deserialize, Serialize};
 
@@ -16,7 +17,7 @@ pub struct CombatEvent {
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct PlaceMessage {
-    pub shape: Shape,
+    pub shape: UnitKind,
     pub row: u32,
     pub col: u32,
 }
@@ -35,20 +36,23 @@ pub enum ClientMessage {
         entity_id: u64,
     },
     SendUnit {
-        shape: Shape,
+        shape: UnitKind,
     },
     UpgradeKing {},
     /// Client detected a seq gap (missed a delta) and asks for a direct resync.
     RequestFullState,
     JoinQueue,
     LeaveQueue,
+    PickFamily {
+        family: Family,
+    },
 }
 
 #[derive(Serialize, Clone, Debug, PartialEq)]
 pub struct Unit {
     /// Full entity bits (index + generation) so stale IDs never match recycled entities.
     pub id: u64,
-    pub shape: Shape,
+    pub shape: UnitKind,
     pub x: f32,
     pub y: f32,
     pub owner_id: i64,
@@ -114,11 +118,22 @@ pub struct GameStateDelta {
 /// contract with `Player::next_send_costs`.
 #[derive(Serialize, Clone, Debug)]
 pub struct SendUnitCatalogEntry {
-    pub shape: Shape,
+    pub shape: UnitKind,
     pub name: &'static str,
     pub base_cost: u32,
     pub income: u32,
     pub bounty: u32,
+}
+
+/// One entry in the server-sent build catalog for the picking player's
+/// family. Sent as `ServerMessage::BuildCatalog` right after a successful
+/// `PickFamily`. The client builds its shop buttons purely from this list —
+/// adding a tower to a family requires no client change.
+#[derive(Serialize, Clone, Debug)]
+pub struct BuildCatalogEntry {
+    pub unit_kind: UnitKind,
+    pub name: &'static str,
+    pub cost: u32,
 }
 
 #[derive(Serialize, Clone, Debug)]
@@ -137,6 +152,11 @@ pub enum ServerMessage {
     /// Server-driven mercenary send catalog, sent once right after
     /// `MatchFound`. Order matches `Player::next_send_costs` by index.
     SendUnitCatalog(Vec<SendUnitCatalogEntry>),
+    /// Families the player may pick from, sent once right after `MatchFound`.
+    FamilyOptions(Vec<Family>),
+    /// Server-driven build catalog for the picking player's chosen family,
+    /// sent once in reply to a successful `PickFamily`.
+    BuildCatalog(Vec<BuildCatalogEntry>),
 }
 
 #[cfg(test)]
@@ -173,7 +193,7 @@ mod tests {
         let json = r#"{"action": "sendUnit", "payload": {"shape": "Square"}}"#;
         let msg: ClientMessage = serde_json::from_str(json).unwrap();
         match msg {
-            ClientMessage::SendUnit { shape } => assert_eq!(shape, Shape::Square),
+            ClientMessage::SendUnit { shape } => assert_eq!(shape, UnitKind::Square),
             _ => panic!("Wrong message type"),
         }
     }
@@ -202,7 +222,7 @@ mod tests {
     fn unit_serialization_includes_mana() {
         let unit = Unit {
             id: 7,
-            shape: Shape::Circle,
+            shape: UnitKind::Circle,
             x: 100.0,
             y: 100.0,
             owner_id: 1,
@@ -226,7 +246,7 @@ mod tests {
     fn unit_serialization_includes_id_and_worker_state() {
         let unit = Unit {
             id: 5,
-            shape: Shape::Circle,
+            shape: UnitKind::Circle,
             x: 650.0,
             y: 50.0,
             owner_id: 1,
@@ -318,9 +338,42 @@ mod tests {
     }
 
     #[test]
+    fn deserialize_pick_family() {
+        use crate::model::family::Family;
+        let json = r#"{"action":"pickFamily","payload":{"family":"Basic"}}"#;
+        let msg: ClientMessage = serde_json::from_str(json).unwrap();
+        match msg {
+            ClientMessage::PickFamily { family } => assert_eq!(family, Family::Basic),
+            _ => panic!("Wrong message type"),
+        }
+    }
+
+    #[test]
+    fn serialize_family_options() {
+        use crate::model::family::Family;
+        let msg = ServerMessage::FamilyOptions(vec![Family::Basic]);
+        let json = serde_json::to_string(&msg).unwrap();
+        assert_eq!(json, r#"{"type":"FamilyOptions","data":["Basic"]}"#);
+    }
+
+    #[test]
+    fn serialize_build_catalog() {
+        let msg = ServerMessage::BuildCatalog(vec![BuildCatalogEntry {
+            unit_kind: UnitKind::Square,
+            name: "Square",
+            cost: 25,
+        }]);
+        let json = serde_json::to_string(&msg).unwrap();
+        assert!(json.starts_with(r#"{"type":"BuildCatalog","data":["#));
+        assert!(json.contains(r#""unit_kind":"Square""#));
+        assert!(json.contains(r#""name":"Square""#));
+        assert!(json.contains(r#""cost":25"#));
+    }
+
+    #[test]
     fn serialize_send_unit_catalog() {
         let msg = ServerMessage::SendUnitCatalog(vec![SendUnitCatalogEntry {
-            shape: Shape::Square,
+            shape: UnitKind::Square,
             name: "Scout",
             base_cost: 8,
             income: 1,

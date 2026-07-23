@@ -1,7 +1,7 @@
 use bevy_ecs::prelude::{Component, Entity};
 use serde::{Deserialize, Serialize};
 
-use super::shape::Shape;
+use super::unit_kind::UnitKind;
 
 #[derive(Component, Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Position {
@@ -16,7 +16,7 @@ pub struct HomePosition(pub Position);
 pub struct Target(pub Entity);
 
 #[derive(Component)]
-pub struct ShapeComponent(pub Shape);
+pub struct ShapeComponent(pub UnitKind);
 
 #[derive(Component)]
 pub struct PlayerIdComponent(pub i64);

@@ -268,7 +268,7 @@ mod tests {
     use super::*;
     use crate::handler::spawn::{spawn_unit, spawn_worker};
     use crate::model::components::{Dead, Position, TargetPositions};
-    use crate::model::shape::Shape;
+    use crate::model::unit_kind::UnitKind;
 
     #[test]
     fn lobby_world_has_combat_event_messages_resource() {
@@ -304,7 +304,7 @@ mod tests {
         let tower_entity = spawn_unit(
             &mut lobby.game_state.world,
             Position { x: 100.0, y: 300.0 },
-            Shape::Square,
+            UnitKind::Square,
             1,
         );
         let tower_id = tower_entity.to_bits();
@@ -385,14 +385,14 @@ mod tests {
         let _living = spawn_unit(
             &mut lobby.game_state.world,
             Position { x: 100.0, y: 300.0 },
-            Shape::Square,
+            UnitKind::Square,
             1,
         );
 
         let dead = spawn_unit(
             &mut lobby.game_state.world,
             Position { x: 200.0, y: 300.0 },
-            Shape::Square,
+            UnitKind::Square,
             1,
         );
         lobby.game_state.world.entity_mut(dead).insert(Dead);
@@ -423,7 +423,7 @@ mod tests {
         spawn_unit(
             &mut lobby.game_state.world,
             Position { x: 100.0, y: 300.0 },
-            Shape::Square,
+            UnitKind::Square,
             1,
         );
         let mut rx = lobby.tx.subscribe();
@@ -442,13 +442,13 @@ mod tests {
         let stationary = spawn_unit(
             &mut lobby.game_state.world,
             Position { x: 100.0, y: 300.0 },
-            Shape::Square,
+            UnitKind::Square,
             1,
         );
         let mover = spawn_unit(
             &mut lobby.game_state.world,
             Position { x: 200.0, y: 300.0 },
-            Shape::Square,
+            UnitKind::Square,
             1,
         );
         let mut rx = lobby.tx.subscribe();
@@ -476,7 +476,7 @@ mod tests {
         let e = spawn_unit(
             &mut lobby.game_state.world,
             Position { x: 100.0, y: 300.0 },
-            Shape::Square,
+            UnitKind::Square,
             1,
         );
         let mut rx = lobby.tx.subscribe();
@@ -498,7 +498,7 @@ mod tests {
         let e = spawn_unit(
             &mut lobby.game_state.world,
             Position { x: 100.0, y: 300.0 },
-            Shape::Square,
+            UnitKind::Square,
             1,
         );
         let mut rx = lobby.tx.subscribe();
@@ -544,7 +544,7 @@ mod tests {
         let e = spawn_unit(
             &mut lobby.game_state.world,
             Position { x: 100.0, y: 300.0 },
-            Shape::Square,
+            UnitKind::Square,
             1,
         );
 
@@ -598,7 +598,7 @@ mod tests {
         let tower = spawn_unit(
             &mut lobby.game_state.world,
             Position { x: 100.0, y: 300.0 },
-            Shape::Square,
+            UnitKind::Square,
             1,
         );
         lobby.game_state.world.entity_mut(tower).insert(Dead);

@@ -1,9 +1,9 @@
 import { SendUnitCatalogEntry } from './types';
 
-export type Shape = 'Square' | 'Circle' | 'Triangle';
+export type UnitKind = 'Square' | 'Circle' | 'Triangle';
 
 export interface MercenaryPanelCallbacks {
-    onSend: (shape: Shape) => void;
+    onSend: (shape: UnitKind) => void;
 }
 
 export class MercenaryPanel {
@@ -100,7 +100,7 @@ export class MercenaryPanel {
         this.unitListEl.querySelectorAll<HTMLButtonElement>('[data-shape]').forEach(btn => {
             btn.addEventListener('click', () => {
                 if (btn.getAttribute('data-unaffordable') === 'true') return;
-                const shape = btn.getAttribute('data-shape') as Shape;
+                const shape = btn.getAttribute('data-shape') as UnitKind;
                 if (shape) this.callbacks.onSend(shape);
             });
         });

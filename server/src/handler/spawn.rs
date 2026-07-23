@@ -6,20 +6,20 @@ use crate::model::components::{
 use crate::model::king_config::{
     KING_BASE_DAMAGE, KING_BASE_HP, KING_BASE_RANGE, KING_BASE_RATE, KING_COLLISION_RADIUS,
 };
-use crate::model::shape::Shape;
+use crate::model::unit_kind::UnitKind;
 use crate::model::unit_config::{
     BOSS_DAMAGE_MULTIPLIER, BOSS_HEALTH_MULTIPLIER, DEFAULT_COLLISION_RADIUS, DEFAULT_HEALTH,
     get_sent_unit_profile, get_unit_profile,
 };
 use bevy_ecs::prelude::{Entity, World};
 
-pub fn spawn_enemy(world: &mut World, pos: Position, shape: Shape, wave: u32) -> Entity {
+pub fn spawn_enemy(world: &mut World, pos: Position, shape: UnitKind, wave: u32) -> Entity {
     let profile = get_unit_profile(shape);
     let scaling_multiplier = crate::handler::wave::get_scaling_multiplier(wave);
 
     // Boss rule: the Circle on a boss wave is the boss; escorts (non-Circle
     // shapes on wave 12) get normal wave scaling.
-    let is_boss = matches!(wave, 6 | 12) && shape == Shape::Circle;
+    let is_boss = matches!(wave, 6 | 12) && shape == UnitKind::Circle;
     let (hp_multiplier, damage_multiplier) = if is_boss {
         (BOSS_HEALTH_MULTIPLIER, BOSS_DAMAGE_MULTIPLIER)
     } else {
@@ -68,7 +68,7 @@ pub fn spawn_enemy(world: &mut World, pos: Position, shape: Shape, wave: u32) ->
 pub fn spawn_sent_enemy(
     world: &mut World,
     pos: Position,
-    shape: Shape,
+    shape: UnitKind,
     wave: u32,
     bounty: u32,
 ) -> Entity {
@@ -78,9 +78,9 @@ pub fn spawn_sent_enemy(
 
     let final_health = DEFAULT_HEALTH * scaling_multiplier * sent_profile.health_multiplier;
     let damage_mult = match shape {
-        Shape::Square => crate::model::unit_config::SENT_SQUARE_DAMAGE_MULT,
-        Shape::Triangle => crate::model::unit_config::SENT_TRIANGLE_DAMAGE_MULT,
-        Shape::Circle => crate::model::unit_config::SENT_CIRCLE_DAMAGE_MULT,
+        UnitKind::Square => crate::model::unit_config::SENT_SQUARE_DAMAGE_MULT,
+        UnitKind::Triangle => crate::model::unit_config::SENT_TRIANGLE_DAMAGE_MULT,
+        UnitKind::Circle => crate::model::unit_config::SENT_CIRCLE_DAMAGE_MULT,
     };
     let final_damage = profile.combat.primary.damage * scaling_multiplier * damage_mult;
 
@@ -109,7 +109,7 @@ pub fn spawn_sent_enemy(
         .id()
 }
 
-pub fn spawn_unit(world: &mut World, pos: Position, shape: Shape, player_id: i64) -> Entity {
+pub fn spawn_unit(world: &mut World, pos: Position, shape: UnitKind, player_id: i64) -> Entity {
     let profile = get_unit_profile(shape);
     let mut entity = world.spawn((
         pos,
@@ -179,7 +179,7 @@ pub fn spawn_king(world: &mut World, player_id: i64, board_idx: usize) -> Entity
             AttackTimer(0.0),
             AttackRange(KING_BASE_RANGE),
             CollisionRadius(KING_COLLISION_RADIUS),
-            ShapeComponent(Shape::Circle),
+            ShapeComponent(UnitKind::Circle),
         ))
         .id()
 }
@@ -188,7 +188,7 @@ pub fn spawn_worker(world: &mut World, player_id: i64, targets: TargetPositions)
     world
         .spawn((
             targets.cart, // Start at cart
-            ShapeComponent(Shape::Circle),
+            ShapeComponent(UnitKind::Circle),
             PlayerIdComponent(player_id),
             Worker,
             WorkerState::MovingToVein,
@@ -304,9 +304,9 @@ mod tests {
     fn spawn_helpers_apply_shape_radii() {
         let mut world = World::new();
 
-        let square = spawn_unit(&mut world, Position { x: 0.0, y: 0.0 }, Shape::Square, 1);
-        let circle = spawn_unit(&mut world, Position { x: 0.0, y: 0.0 }, Shape::Circle, 1);
-        let triangle = spawn_unit(&mut world, Position { x: 0.0, y: 0.0 }, Shape::Triangle, 1);
+        let square = spawn_unit(&mut world, Position { x: 0.0, y: 0.0 }, UnitKind::Square, 1);
+        let circle = spawn_unit(&mut world, Position { x: 0.0, y: 0.0 }, UnitKind::Circle, 1);
+        let triangle = spawn_unit(&mut world, Position { x: 0.0, y: 0.0 }, UnitKind::Triangle, 1);
 
         assert_eq!(
             world.entity(square).get::<CollisionRadius>().unwrap().0,
@@ -328,9 +328,9 @@ mod tests {
         let mut world = World::new();
 
         let unit_pos = Position { x: 10.0, y: 20.0 };
-        let unit = spawn_unit(&mut world, unit_pos, Shape::Circle, 1);
+        let unit = spawn_unit(&mut world, unit_pos, UnitKind::Circle, 1);
         let enemy_pos = Position { x: 100.0, y: 200.0 };
-        let enemy = spawn_enemy(&mut world, enemy_pos, Shape::Circle, 1);
+        let enemy = spawn_enemy(&mut world, enemy_pos, UnitKind::Circle, 1);
 
         for (entity, pos) in [(unit, unit_pos), (enemy, enemy_pos)] {
             let e = world.entity(entity);
@@ -363,7 +363,7 @@ mod tests {
         let mut world = World::new();
 
         // Triangle: Ranged Physical Pierce
-        let triangle = spawn_unit(&mut world, Position { x: 0.0, y: 0.0 }, Shape::Triangle, 1);
+        let triangle = spawn_unit(&mut world, Position { x: 0.0, y: 0.0 }, UnitKind::Triangle, 1);
         let t_stats = world.entity(triangle).get::<AttackStats>().unwrap();
         let t_range = world.entity(triangle).get::<AttackRange>().unwrap();
         assert_eq!(t_stats.damage_type, DamageType::PHYSICAL_PIERCE);
@@ -373,14 +373,14 @@ mod tests {
         );
 
         // Square: Melee Physical Basic
-        let square = spawn_unit(&mut world, Position { x: 0.0, y: 0.0 }, Shape::Square, 1);
+        let square = spawn_unit(&mut world, Position { x: 0.0, y: 0.0 }, UnitKind::Square, 1);
         let s_stats = world.entity(square).get::<AttackStats>().unwrap();
         let s_range = world.entity(square).get::<AttackRange>().unwrap();
         assert_eq!(s_stats.damage_type, DamageType::PHYSICAL_BASIC);
         assert!(s_range.0 <= DEFAULT_ATTACK_RANGE, "Square should be melee");
 
         // Circle: Fire Mage (Mana + Ranged Fire Magical)
-        let circle = spawn_unit(&mut world, Position { x: 0.0, y: 0.0 }, Shape::Circle, 1);
+        let circle = spawn_unit(&mut world, Position { x: 0.0, y: 0.0 }, UnitKind::Circle, 1);
         let c_stats = world.entity(circle).get::<AttackStats>().unwrap();
         let c_range = world.entity(circle).get::<AttackRange>().unwrap();
         let c_mana = world.entity(circle).get::<Mana>();
@@ -400,7 +400,7 @@ mod tests {
         let wave = 3;
         let multiplier = get_scaling_multiplier(wave);
 
-        let enemy_id = spawn_enemy(&mut world, Position { x: 0.0, y: 0.0 }, Shape::Square, wave);
+        let enemy_id = spawn_enemy(&mut world, Position { x: 0.0, y: 0.0 }, UnitKind::Square, wave);
         let e = world.entity(enemy_id);
 
         let health = e.get::<Health>().unwrap();
@@ -408,7 +408,7 @@ mod tests {
 
         assert!((health.max - DEFAULT_HEALTH * multiplier).abs() < 0.1);
         assert!(
-            (stats.damage - get_unit_profile(Shape::Square).combat.primary.damage * multiplier)
+            (stats.damage - get_unit_profile(UnitKind::Square).combat.primary.damage * multiplier)
                 .abs()
                 < 0.1
         );
@@ -422,7 +422,7 @@ mod tests {
         let entity = spawn_sent_enemy(
             &mut world,
             Position { x: 100.0, y: 30.0 },
-            Shape::Square,
+            UnitKind::Square,
             1,
             5,
         );
@@ -442,7 +442,7 @@ mod tests {
         let entity = spawn_sent_enemy(
             &mut world,
             Position { x: 100.0, y: 30.0 },
-            Shape::Circle,
+            UnitKind::Circle,
             wave,
             20,
         );
@@ -462,7 +462,7 @@ mod tests {
         let entity = spawn_sent_enemy(
             &mut world,
             Position { x: 100.0, y: 30.0 },
-            Shape::Triangle,
+            UnitKind::Triangle,
             1,
             8,
         );
@@ -479,7 +479,7 @@ mod tests {
         let wave = 6;
         let multiplier = get_scaling_multiplier(wave);
 
-        let enemy_id = spawn_enemy(&mut world, Position { x: 0.0, y: 0.0 }, Shape::Circle, wave);
+        let enemy_id = spawn_enemy(&mut world, Position { x: 0.0, y: 0.0 }, UnitKind::Circle, wave);
         let e = world.entity(enemy_id);
 
         assert!(
@@ -491,7 +491,7 @@ mod tests {
         let stats = e.get::<AttackStats>().unwrap();
 
         let expected_health = DEFAULT_HEALTH * multiplier * BOSS_HEALTH_MULTIPLIER;
-        let expected_damage = get_unit_profile(Shape::Circle).combat.primary.damage
+        let expected_damage = get_unit_profile(UnitKind::Circle).combat.primary.damage
             * multiplier
             * BOSS_DAMAGE_MULTIPLIER;
 
@@ -506,13 +506,13 @@ mod tests {
         let boss = spawn_enemy(
             &mut world,
             Position { x: 100.0, y: 30.0 },
-            Shape::Circle,
+            UnitKind::Circle,
             12,
         );
         let escort = spawn_enemy(
             &mut world,
             Position { x: 140.0, y: 30.0 },
-            Shape::Triangle,
+            UnitKind::Triangle,
             12,
         );
         let mult = get_scaling_multiplier(12);

@@ -1,7 +1,8 @@
 use bevy_ecs::prelude::Resource;
 use serde::Serialize;
 
-use crate::model::shape::Shape;
+use crate::model::family::Family;
+use crate::model::unit_kind::UnitKind;
 
 /// ECS Resource wrapping the lobby's player list so systems can read and award gold.
 #[derive(Resource, Clone, Debug, Default)]
@@ -15,7 +16,7 @@ pub struct Player {
     /// Permanent income awarded to this player at the end of each combat round.
     pub income: u32,
     /// Units queued to be sent to the opponent's board on the next combat phase.
-    pub spawning_queue: Vec<Shape>,
+    pub spawning_queue: Vec<UnitKind>,
     /// Current king upgrade tier (0 = base, max 4).
     pub king_tier: u32,
     /// Sends of each shape this wave (Square/Triangle/Circle); resets each wave.
@@ -27,6 +28,8 @@ pub struct Player {
     pub next_send_costs: [u32; 3],
     /// Number of creeps this player's board has leaked this wave; resets each wave.
     pub leaks_this_wave: u32,
+    /// Family locked in for this match on first `PickFamily`; `None` until picked.
+    pub family: Option<Family>,
 }
 
 impl Player {
@@ -41,6 +44,7 @@ impl Player {
             sends_this_wave: [0; 3],
             next_send_costs: [0; 3],
             leaks_this_wave: 0,
+            family: None,
         };
         player.refresh_send_costs(1);
         player
@@ -65,9 +69,9 @@ impl Player {
 
     /// Recomputes `next_send_costs` from the current wave and counters.
     pub fn refresh_send_costs(&mut self, wave: u32) {
-        use crate::model::shape::Shape;
+        use crate::model::unit_kind::UnitKind;
         use crate::model::unit_config::{sent_unit_cost, shape_index};
-        for shape in [Shape::Square, Shape::Triangle, Shape::Circle] {
+        for shape in [UnitKind::Square, UnitKind::Triangle, UnitKind::Circle] {
             let i = shape_index(shape);
             self.next_send_costs[i] = sent_unit_cost(shape, wave, self.sends_this_wave[i]);
         }
@@ -77,6 +81,12 @@ impl Player {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn new_player_has_no_family_picked() {
+        let player = Player::new(1, "test".to_string(), 100);
+        assert_eq!(player.family, None);
+    }
 
     #[test]
     fn player_new_initialises_king_tier_to_zero() {
@@ -99,13 +109,13 @@ mod tests {
 
     #[test]
     fn player_income_and_spawning_queue_are_mutable() {
-        use crate::model::shape::Shape;
+        use crate::model::unit_kind::UnitKind;
         let mut player = Player::new(1, "test".to_string(), 100);
         player.income = 5;
-        player.spawning_queue.push(Shape::Square);
+        player.spawning_queue.push(UnitKind::Square);
         assert_eq!(player.income, 5);
         assert_eq!(player.spawning_queue.len(), 1);
-        assert_eq!(player.spawning_queue[0], Shape::Square);
+        assert_eq!(player.spawning_queue[0], UnitKind::Square);
     }
 
     #[test]
